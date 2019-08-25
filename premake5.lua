@@ -3,10 +3,11 @@ project "GLFW"
 	kind "StaticLib"
 	language "C"
 
-	targetdir ("bin/" .. outputdir)
-	objdir ("bin-int/" .. outputdir)
+	targetdir ("bin/" .. outputdir .. "/%{prj.name})
+	objdir ("bin-int/" .. outputdir .. "/%{prj.name})
 
-	files{
+	files
+	{
 		"include/GLFW/glfw3.h",
 		"include/GLFW/glfw3native.h",
 		"src/glfw_config.h",
@@ -23,7 +24,8 @@ project "GLFW"
 		systemversion "latest"
 		staticruntime "On"
 
-		files{
+		files
+		{
 			"src/x11_init.c",
 			"src/x11_monitor.c",
 			"src/x11_window.c",
@@ -36,11 +38,13 @@ project "GLFW"
 			"src/linux_joystick.c"
 		}
 
-		defines{
+		defines
+		{
 			"_GLFW_X11"
 		}
 		
-		links{
+		links
+		{
 			"dl",
 			"m",
 			"GL",
@@ -59,7 +63,8 @@ project "GLFW"
 		systemversion "latest"
 		staticruntime "On"
 		
-		files{
+		files
+		{
 			"src/cocoa_init.m",
 			"src/cocoa_joystick.h",
 			"src/cocoa_joystick.m",
@@ -69,11 +74,13 @@ project "GLFW"
 			"src/cocoa_window.m"
 		}
 
-		defines{
+		defines
+		{
 			"_GLFW_COCOA"
 		}
 
-		links{
+		links
+		{
 			"CoreFoundation.framework",
 			"Cocoa.framework",
 			"IOKit.framework",
@@ -85,7 +92,8 @@ project "GLFW"
 		systemversion "latest"
 		staticruntime "On"
 
-		files{
+		files
+		{
 			"src/win32_init.c",
 			"src/win32_joystick.c",
 			"src/win32_monitor.c",
@@ -97,7 +105,8 @@ project "GLFW"
 			"src/osmesa_context.c"
 		}
 
-		defines { 
+		defines 
+		{ 
 			"_GLFW_WIN32",
 			"_CRT_SECURE_NO_WARNINGS"
 		}
