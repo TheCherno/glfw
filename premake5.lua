@@ -64,6 +64,30 @@ project "GLFW"
 			"_CRT_SECURE_NO_WARNINGS"
 		}
 
+		filter "system:macosx"
+			pic "On"
+
+			cppdialect "gnu++17"
+			staticruntime "On"
+
+			files
+			{
+				"src/cocoa_init.m",
+				"src/cocoa_joystick.m",
+				"src/cocoa_monitor.m",
+				"src/cocoa_window.m",
+				"src/cocoa_time.c",
+				"src/posix_thread.c",
+				"src/nsgl_context.m ",
+				"src/egl_context.c ",
+				"src/osmesa_context.c"
+			}
+
+			defines
+			{
+				"_GLFW_COCOA"
+			}
+
 	filter "configurations:Debug"
 		runtime "Debug"
 		symbols "on"
