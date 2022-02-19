@@ -1,7 +1,6 @@
 project "GLFW"
 	kind "StaticLib"
 	language "C"
-	staticruntime "off"
 
 	targetdir ("bin/" .. outputdir .. "/%{prj.name}")
 	objdir ("bin-int/" .. outputdir .. "/%{prj.name}")
@@ -15,17 +14,14 @@ project "GLFW"
 		"src/input.c",
 		"src/monitor.c",
 		"src/vulkan.c",
-		"src/window.c",
-		"src/null_init.c",
-		"src/null_monitor.c",
-		"src/null_window.c",
-		"src/null_joystick.c"
+		"src/window.c"
 	}
 	filter "system:linux"
 		pic "On"
 
 		systemversion "latest"
-		
+		staticruntime "On"
+
 		files {
 			"src/x11_init.c",
 			"src/x11_monitor.c",
@@ -45,6 +41,7 @@ project "GLFW"
 
 	filter "system:windows"
 		systemversion "latest"
+		staticruntime "On"
 
 		files {
 			"src/win32_init.c",
@@ -53,7 +50,6 @@ project "GLFW"
 			"src/win32_time.c",
 			"src/win32_thread.c",
 			"src/win32_window.c",
-			"src/win32_modules.c",
 			"src/wgl_context.c",
 			"src/egl_context.c",
 			"src/osmesa_context.c"
@@ -62,10 +58,6 @@ project "GLFW"
 		defines { 
 			"_GLFW_WIN32",
 			"_CRT_SECURE_NO_WARNINGS"
-		}
-
-		links {
-			"Dwmapi.lib"
 		}
 
 	filter "configurations:Debug"
