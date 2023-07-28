@@ -2,6 +2,7 @@ project "GLFW"
 	kind "StaticLib"
 	language "C"
 	staticruntime "off"
+	warnings "off"
 
 	targetdir ("bin/" .. outputdir .. "/%{prj.name}")
 	objdir ("bin-int/" .. outputdir .. "/%{prj.name}")
@@ -37,6 +38,7 @@ project "GLFW"
 			"src/x11_monitor.c",
 			"src/x11_window.c",
 			"src/xkb_unicode.c",
+			"src/posix_module.c",
 			"src/posix_time.c",
 			"src/posix_poll.c",
 			"src/posix_thread.c",
@@ -103,9 +105,9 @@ project "GLFW"
 
 	filter "configurations:Release"
 		runtime "Release"
-		optimize "on"
+		optimize "speed"
 
-	filter "configurations:Dist"
+  filter "configurations:Dist"
 		runtime "Release"
-		optimize "on"
-        symbols "off"
+		optimize "speed"
+    symbols "off"
