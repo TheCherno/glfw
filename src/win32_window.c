@@ -1041,7 +1041,10 @@ static LRESULT CALLBACK windowProc(HWND hWnd, UINT uMsg,
             // mouse icon change to a resize handle, but resizing still
             // works once you click and drag. This works on both
             // Windows 10 & 11, so we'll keep that for now.
-			requestedClientRect->top += 0; 
+            if (window->win32.maximized)
+                requestedClientRect->top += 8;
+            else
+                requestedClientRect->top += 0;
 
             // NOTE(Yan): seems to make no difference what we return here,
             //            was originally 0
