@@ -1,7 +1,8 @@
 project "GLFW"
 	kind "StaticLib"
 	language "C"
-	staticruntime "off"
+    staticruntime "on"          --using static runtime
+	--staticruntime "off"
 	warnings "off"
 
 	targetdir ("bin/" .. outputdir .. "/%{prj.name}")
