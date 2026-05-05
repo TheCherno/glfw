@@ -1094,7 +1094,12 @@ static LRESULT CALLBACK windowProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM l
             // mouse icon change to a resize handle, but resizing still
             // works once you click and drag. This works on both
             // Windows 10 & 11, so we'll keep that for now.
-            requestedClientRect->top += 0;
+            //
+            // When maximized, Windows pads the proposed window rect by
+            // resizeBorderY on top so the resize cursor is reachable past
+            // the monitor edge. Undo that pad so the client area sits flush
+            // with the monitor top instead of bleeding off-screen.
+            requestedClientRect->top += IsZoomed(hWnd) ? resizeBorderY : 0;
 
             // NOTE(Yan): seems to make no difference what we return here,
             //            was originally 0
