@@ -75,12 +75,14 @@ project "GLFW"
 		}
 
 		for _, protocol in ipairs(protocols) do
+			local xml_file = "deps/wayland/" .. protocol .. ".xml"
 			local out_file = "src/" .. protocol .. "-client-protocol.h"
 			local out_code_file = "src/" .. protocol .. "-client-protocol-code.h"
 
+			-- Only regenerate when the .xml source is newer than the output
 			prebuildcommands {
-				"wayland-scanner client-header deps/wayland/" .. protocol .. ".xml " .. out_file,
-				"wayland-scanner private-code deps/wayland/" .. protocol .. ".xml " .. out_code_file
+				"@test " .. out_file .. " -nt " .. xml_file .. " || wayland-scanner client-header " .. xml_file .. " " .. out_file,
+				"@test " .. out_code_file .. " -nt " .. xml_file .. " || wayland-scanner private-code " .. xml_file .. " " .. out_code_file
 			}
 
 			buildoutputs {
