@@ -1373,6 +1373,8 @@ static LRESULT CALLBACK windowProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM l
             POINT pt = { GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
             ScreenToClient(hWnd, &pt);
 
+            int result = HTCLIENT;
+
             // Check borders first
             if (!window->win32.maximized)
             {
@@ -1392,24 +1394,27 @@ static LRESULT CALLBACK windowProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM l
                 if (pt.y >= rc.bottom - border_thickness.bottom)
                     hit |= bottom;
 
-                if (hit & top && hit & left)        return HTTOPLEFT;
-                if (hit & top && hit & right)       return HTTOPRIGHT;
-                if (hit & bottom && hit & left)     return HTBOTTOMLEFT;
-                if (hit & bottom && hit & right)    return HTBOTTOMRIGHT;
-                if (hit & left)                     return HTLEFT;
-                if (hit & top)                      return HTTOP;
-                if (hit & right)                    return HTRIGHT;
-                if (hit & bottom)                   return HTBOTTOM;
+                if      (hit & top && hit & left)    result = HTTOPLEFT;
+                else if (hit & top && hit & right)   result = HTTOPRIGHT;
+                else if (hit & bottom && hit & left) result = HTBOTTOMLEFT;
+                else if (hit & bottom && hit & right)result = HTBOTTOMRIGHT;
+                else if (hit & left)                 result = HTLEFT;
+                else if (hit & top)                  result = HTTOP;
+                else if (hit & right)                result = HTRIGHT;
+                else if (hit & bottom)               result = HTBOTTOM;
             }
 
-            // Then do client-side test which should determine titlebar bounds
-            int titlebarHittest = 0;
-            _glfwInputTitleBarHitTest(window, pt.x, pt.y, &titlebarHittest);
-            if (titlebarHittest)
-                return HTCAPTION;
+            if (result == HTCLIENT)
+            {
+                // Then do client-side test which should determine titlebar bounds
+                int titlebarHittest = 0;
+                _glfwInputTitleBarHitTest(window, pt.x, pt.y, &titlebarHittest);
+                if (titlebarHittest)
+                    result = HTCAPTION;
+            }
 
-            // In client area
-            return HTCLIENT;
+            window->win32.lastHitTest = result;
+            return result;
         }
     }
 
@@ -2509,6 +2514,10 @@ void _glfwDestroyCursorWin32(_GLFWcursor* cursor)
 
 void _glfwSetCursorWin32(_GLFWwindow* window, _GLFWcursor* cursor)
 {
+    // Don't override the OS resize cursor on the border.
+    if (window->win32.lastHitTest != 0 && window->win32.lastHitTest != HTCLIENT)
+        return;
+
     if (cursorInContentArea(window))
         updateCursorImage(window);
 }
