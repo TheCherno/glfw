@@ -525,6 +525,8 @@ typedef struct _GLFWlibraryWayland
     // Surface-local cursor pos at press time, for drag attach offset.
     double                      pointerButtonX, pointerButtonY;
     int                         pointerButtonsDown;
+    uint32_t                    titlebarClickTime;
+    _GLFWwindow*                titlebarClickWindow;
 
     int                         keyRepeatTimerfd;
     int32_t                     keyRepeatRate;
@@ -547,6 +549,7 @@ typedef struct _GLFWlibraryWayland
         double                  discreteY;
         int                     button;
         int                     action;
+        uint32_t                buttonTime;
     } pending;
 
     struct {

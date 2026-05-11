@@ -2140,7 +2140,7 @@ static void processPointerMotion(double xpos, double ypos)
     }
 }
 
-static void processPointerButton(int button, int action)
+static void processPointerButton(int button, int action, uint32_t time)
 {
     // Compositor sends a spurious release when transferring the grab to drag-and-drop.
     // Suppress it; endToplevelDragSession synthesizes the real release.
@@ -2190,8 +2190,26 @@ static void processPointerButton(int button, int action)
                     _glfwInputTitleBarHitTest(window, x, y, &titlebarHit);
                     if (titlebarHit)
                     {
-                        xdg_toplevel_move(toplevel, _glfw.wl.seat, _glfw.wl.serial);
-                        handled = GLFW_TRUE;
+                        const uint32_t doubleClickMs = 400;
+
+                        if (_glfw.wl.titlebarClickWindow == window &&
+                            time - _glfw.wl.titlebarClickTime <= doubleClickMs)
+                        {
+                            _glfw.wl.titlebarClickTime = 0;
+                            _glfw.wl.titlebarClickWindow = NULL;
+                            if (window->wl.maximized)
+                                _glfwRestoreWindowWayland(window);
+                            else
+                                _glfwMaximizeWindowWayland(window);
+                            handled = GLFW_TRUE;
+                        }
+                        else
+                        {
+                            _glfw.wl.titlebarClickTime = time;
+                            _glfw.wl.titlebarClickWindow = window;
+                            xdg_toplevel_move(toplevel, _glfw.wl.seat, _glfw.wl.serial);
+                            handled = GLFW_TRUE;
+                        }
                     }
                 }
             }
@@ -2351,9 +2369,10 @@ static void pointerHandleButton(void* userData,
         _glfw.wl.pending.events |= GLFW_PENDING_BUTTON;
         _glfw.wl.pending.button = button;
         _glfw.wl.pending.action = action;
+        _glfw.wl.pending.buttonTime = time;
     }
     else
-        processPointerButton(button, action);
+        processPointerButton(button, action, time);
 }
 
 static void pointerHandleAxis(void* userData,
@@ -2401,7 +2420,7 @@ static void pointerHandleFrame(void* userData, struct wl_pointer* pointer)
         processPointerMotion(_glfw.wl.pending.pointerX, _glfw.wl.pending.pointerY);
 
     if (_glfw.wl.pending.events & GLFW_PENDING_BUTTON)
-        processPointerButton(_glfw.wl.pending.button, _glfw.wl.pending.action);
+        processPointerButton(_glfw.wl.pending.button, _glfw.wl.pending.action, _glfw.wl.pending.buttonTime);
 
     if (_glfw.wl.pending.events & GLFW_PENDING_DISCRETE)
         processPointerScroll(_glfw.wl.pending.discreteX, _glfw.wl.pending.discreteY);
