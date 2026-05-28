@@ -1481,20 +1481,25 @@ static struct xdg_surface* getWindowXdgSurface(_GLFWwindow* w)
     return NULL;
 }
 
-// Walk the GLFW window list and return the first window that owns a mapped
-// xdg_toplevel (directly or through libdecor) and has a queryable xdg_surface.
-// That window acts as the parent surface for any popup we spawn.
+// Resolve the parent surface for a popup we are about to spawn. A nested popup
+// (e.g. a submenu) must parent to the topmost mapped popup, not the root
+// toplevel: Wayland requires an xdg_popup's parent be the topmost surface in
+// the popup stack. The window list is newest-first (glfwCreateWindow prepends
+// to windowListHead), so the first popup we encounter is the topmost; if none
+// is open, fall back to the first mapped toplevel.
 static _GLFWwindow* findWaylandPopupParent(_GLFWwindow* self)
 {
+    _GLFWwindow* toplevel = NULL;
     for (_GLFWwindow* w = _glfw.windowListHead; w; w = w->next)
     {
         if (w == self) continue;
-        if (w->wl.xdg.popup) continue;
         if (!getWindowXdgSurface(w)) continue;
-        if (w->wl.xdg.toplevel || w->wl.libdecor.frame)
+        if (w->wl.xdg.popup)
             return w;
+        if ((w->wl.xdg.toplevel || w->wl.libdecor.frame) && !toplevel)
+            toplevel = w;
     }
-    return NULL;
+    return toplevel;
 }
 
 static GLFWbool createXdgPopupShellObjects(_GLFWwindow* window,
@@ -1523,9 +1528,16 @@ static GLFWbool createXdgPopupShellObjects(_GLFWwindow* window,
     const int h = window->wl.height > 0 ? window->wl.height : 1;
     xdg_positioner_set_size(positioner, w, h);
 
-    // pendingPos is parent-relative (no global coords on Wayland).
-    const int px = window->wl.pendingPosSet ? window->wl.pendingPosX : 0;
-    const int py = window->wl.pendingPosSet ? window->wl.pendingPosY : 0;
+    // The anchor rect is relative to the parent surface (no global coords on
+    // Wayland). Window positions are given in one global frame rooted at the
+    // toplevel, so when the parent is itself a popup, rebase onto its origin.
+    int px = window->wl.pendingPosSet ? window->wl.pendingPosX : 0;
+    int py = window->wl.pendingPosSet ? window->wl.pendingPosY : 0;
+    if (window->wl.pendingPosSet && parent->wl.xdg.popup && parent->wl.pendingPosSet)
+    {
+        px -= parent->wl.pendingPosX;
+        py -= parent->wl.pendingPosY;
+    }
     xdg_positioner_set_anchor_rect(positioner, px, py, 1, 1);
     xdg_positioner_set_anchor(positioner, XDG_POSITIONER_ANCHOR_TOP_LEFT);
     xdg_positioner_set_gravity(positioner, XDG_POSITIONER_GRAVITY_BOTTOM_RIGHT);
@@ -1547,6 +1559,7 @@ static GLFWbool createXdgPopupShellObjects(_GLFWwindow* window,
         return GLFW_FALSE;
     }
     xdg_popup_add_listener(window->wl.xdg.popup, &xdgPopupListener, window);
+    window->wl.xdg.popupParent = parent;
 
     // Grab with a press serial so the compositor auto-dismisses on outside click.
     if (_glfw.wl.seat && _glfw.wl.pointerButtonSerial)
@@ -1731,6 +1744,18 @@ static GLFWbool createShellObjects(_GLFWwindow* window)
 
 static void destroyShellObjects(_GLFWwindow* window)
 {
+    // Wayland requires popups be destroyed topmost-first (LIFO). Callers may
+    // tear popup chains down parent-first, so before destroying our own popup,
+    // recursively destroy any child popups still parented to this window.
+    if (window->wl.xdg.popup)
+    {
+        for (_GLFWwindow* w = _glfw.windowListHead; w; w = w->next)
+        {
+            if (w != window && w->wl.xdg.popupParent == window && w->wl.xdg.popup)
+                destroyShellObjects(w);
+        }
+    }
+
     destroyKdeShadow(window);
     destroyFallbackDecorations(window);
 
@@ -1756,6 +1781,7 @@ static void destroyShellObjects(_GLFWwindow* window)
     window->wl.xdg.decoration = NULL;
     window->wl.xdg.decorationMode = 0;
     window->wl.xdg.popup = NULL;
+    window->wl.xdg.popupParent = NULL;
     window->wl.xdg.toplevel = NULL;
     window->wl.xdg.surface = NULL;
     window->wl.mappedCallback = NULL;
@@ -3254,6 +3280,13 @@ void _glfwDestroyWindowWayland(_GLFWwindow* window)
 
     if (window->wl.surface == _glfw.wl.pointerSurface)
         _glfw.wl.pointerSurface = NULL;
+
+    // Drop any popup's back-reference to this window so it can't dangle.
+    for (_GLFWwindow* w = _glfw.windowListHead; w; w = w->next)
+    {
+        if (w->wl.xdg.popupParent == window)
+            w->wl.xdg.popupParent = NULL;
+    }
 
     if (window == _glfw.wl.keyboardFocus)
     {
