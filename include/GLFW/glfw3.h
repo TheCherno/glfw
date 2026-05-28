@@ -3509,6 +3509,10 @@ GLFWAPI void glfwGetWindowPos(GLFWwindow* window, int* xpos, int* ypos);
  */
 GLFWAPI void glfwSetWindowPos(GLFWwindow* window, int xpos, int ypos);
 
+/*! @brief Sets the popup parent for xdg_popup nesting on Wayland.
+ */
+GLFWAPI void glfwSetPopupParent(GLFWwindow* window, GLFWwindow* parent);
+
 /*! @brief Retrieves the size of the content area of the specified window.
  *
  *  This function retrieves the size, in screen coordinates, of the content area

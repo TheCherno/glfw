@@ -542,6 +542,8 @@ struct _GLFWwindow
     GLFWbool            mousePassthrough;
     GLFWbool            shouldClose;
     void*               userPointer;
+    // Explicit popup parent for proper xdg_popup nesting on Wayland.
+    struct _GLFWwindow* popupParent;
     GLFWbool            doublebuffer;
     GLFWvidmode         videoMode;
     _GLFWmonitor*       monitor;

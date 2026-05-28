@@ -618,6 +618,14 @@ GLFWAPI void glfwSetWindowPos(GLFWwindow* handle, int xpos, int ypos)
     _glfw.platform.setWindowPos(window, xpos, ypos);
 }
 
+GLFWAPI void glfwSetPopupParent(GLFWwindow* handle, GLFWwindow* parentHandle)
+{
+    _GLFW_REQUIRE_INIT();
+    _GLFWwindow* window = (_GLFWwindow*) handle;
+    assert(window != NULL);
+    window->popupParent = parentHandle ? (_GLFWwindow*) parentHandle : NULL;
+}
+
 GLFWAPI void glfwGetWindowSize(GLFWwindow* handle, int* width, int* height)
 {
     if (width)

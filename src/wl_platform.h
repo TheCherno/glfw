@@ -402,9 +402,6 @@ typedef struct _GLFWwindowWayland
         struct xdg_surface*     surface;
         struct xdg_toplevel*    toplevel;
         struct xdg_popup*       popup;
-        // Window whose surface this popup is parented to. Used to destroy child
-        // popups before their parent (Wayland requires LIFO popup teardown).
-        _GLFWwindow*            popupParent;
         struct zxdg_toplevel_decoration_v1* decoration;
         uint32_t                decorationMode;
     } xdg;

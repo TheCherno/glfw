@@ -1489,17 +1489,15 @@ static struct xdg_surface* getWindowXdgSurface(_GLFWwindow* w)
 // is open, fall back to the first mapped toplevel.
 static _GLFWwindow* findWaylandPopupParent(_GLFWwindow* self)
 {
-    _GLFWwindow* toplevel = NULL;
     for (_GLFWwindow* w = _glfw.windowListHead; w; w = w->next)
     {
         if (w == self) continue;
+        if (w->wl.xdg.popup) continue;
         if (!getWindowXdgSurface(w)) continue;
-        if (w->wl.xdg.popup)
+        if (w->wl.xdg.toplevel || w->wl.libdecor.frame)
             return w;
-        if ((w->wl.xdg.toplevel || w->wl.libdecor.frame) && !toplevel)
-            toplevel = w;
     }
-    return toplevel;
+    return NULL;
 }
 
 static GLFWbool createXdgPopupShellObjects(_GLFWwindow* window,
@@ -1533,7 +1531,7 @@ static GLFWbool createXdgPopupShellObjects(_GLFWwindow* window,
     // toplevel, so when the parent is itself a popup, rebase onto its origin.
     int px = window->wl.pendingPosSet ? window->wl.pendingPosX : 0;
     int py = window->wl.pendingPosSet ? window->wl.pendingPosY : 0;
-    if (window->wl.pendingPosSet && parent->wl.xdg.popup && parent->wl.pendingPosSet)
+    if (parent->wl.xdg.popup && parent->wl.pendingPosSet)
     {
         px -= parent->wl.pendingPosX;
         py -= parent->wl.pendingPosY;
@@ -1543,9 +1541,7 @@ static GLFWbool createXdgPopupShellObjects(_GLFWwindow* window,
     xdg_positioner_set_gravity(positioner, XDG_POSITIONER_GRAVITY_BOTTOM_RIGHT);
     xdg_positioner_set_constraint_adjustment(positioner,
         XDG_POSITIONER_CONSTRAINT_ADJUSTMENT_SLIDE_X |
-        XDG_POSITIONER_CONSTRAINT_ADJUSTMENT_SLIDE_Y |
-        XDG_POSITIONER_CONSTRAINT_ADJUSTMENT_FLIP_X |
-        XDG_POSITIONER_CONSTRAINT_ADJUSTMENT_FLIP_Y);
+        XDG_POSITIONER_CONSTRAINT_ADJUSTMENT_SLIDE_Y);
 
     window->wl.xdg.popup = xdg_surface_get_popup(window->wl.xdg.surface,
                                                  getWindowXdgSurface(parent),
@@ -1559,7 +1555,6 @@ static GLFWbool createXdgPopupShellObjects(_GLFWwindow* window,
         return GLFW_FALSE;
     }
     xdg_popup_add_listener(window->wl.xdg.popup, &xdgPopupListener, window);
-    window->wl.xdg.popupParent = parent;
 
     // Grab with a press serial so the compositor auto-dismisses on outside click.
     if (_glfw.wl.seat && _glfw.wl.pointerButtonSerial)
@@ -1721,7 +1716,9 @@ static GLFWbool createShellObjects(_GLFWwindow* window)
     // Menu-style windows (undecorated + !focusOnShow) become xdg_popups.
     if (!window->focusOnShow && !window->decorated && !window->monitor)
     {
-        _GLFWwindow* parent = findWaylandPopupParent(window);
+        _GLFWwindow* parent = window->popupParent
+            ? window->popupParent
+            : findWaylandPopupParent(window);
         if (parent)
             return createXdgPopupShellObjects(window, parent);
     }
@@ -1751,7 +1748,7 @@ static void destroyShellObjects(_GLFWwindow* window)
     {
         for (_GLFWwindow* w = _glfw.windowListHead; w; w = w->next)
         {
-            if (w != window && w->wl.xdg.popupParent == window && w->wl.xdg.popup)
+            if (w != window && w->popupParent == window && w->wl.xdg.popup)
                 destroyShellObjects(w);
         }
     }
@@ -1781,7 +1778,6 @@ static void destroyShellObjects(_GLFWwindow* window)
     window->wl.xdg.decoration = NULL;
     window->wl.xdg.decorationMode = 0;
     window->wl.xdg.popup = NULL;
-    window->wl.xdg.popupParent = NULL;
     window->wl.xdg.toplevel = NULL;
     window->wl.xdg.surface = NULL;
     window->wl.mappedCallback = NULL;
@@ -3284,8 +3280,8 @@ void _glfwDestroyWindowWayland(_GLFWwindow* window)
     // Drop any popup's back-reference to this window so it can't dangle.
     for (_GLFWwindow* w = _glfw.windowListHead; w; w = w->next)
     {
-        if (w->wl.xdg.popupParent == window)
-            w->wl.xdg.popupParent = NULL;
+        if (w->popupParent == window)
+            w->popupParent = NULL;
     }
 
     if (window == _glfw.wl.keyboardFocus)
