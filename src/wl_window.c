@@ -1481,23 +1481,28 @@ static struct xdg_surface* getWindowXdgSurface(_GLFWwindow* w)
     return NULL;
 }
 
-// Resolve the parent surface for a popup we are about to spawn. A nested popup
-// (e.g. a submenu) must parent to the topmost mapped popup, not the root
-// toplevel: Wayland requires an xdg_popup's parent be the topmost surface in
-// the popup stack. The window list is newest-first (glfwCreateWindow prepends
-// to windowListHead), so the first popup we encounter is the topmost; if none
-// is open, fall back to the first mapped toplevel.
+// Resolve the parent surface for a popup we are about to spawn. Wayland requires
+// an xdg_popup's parent be the topmost surface in the popup stack, so a nested
+// popup (e.g. a submenu) must parent to the topmost mapped popup rather than the
+// root toplevel. The window list is newest-first (glfwCreateWindow prepends to
+// windowListHead), which is why iterating front-to-back finds the topmost first.
 static _GLFWwindow* findWaylandPopupParent(_GLFWwindow* self)
 {
+    _GLFWwindow* toplevel = NULL;
     for (_GLFWwindow* w = _glfw.windowListHead; w; w = w->next)
     {
         if (w == self) continue;
-        if (w->wl.xdg.popup) continue;
         if (!getWindowXdgSurface(w)) continue;
-        if (w->wl.xdg.toplevel || w->wl.libdecor.frame)
+
+        // Return newest popup older than self
+        if (w->wl.xdg.popup)
             return w;
+
+        // If no newest popup older than self exists, we will return the newest mapped toplevel
+        if ((w->wl.xdg.toplevel || w->wl.libdecor.frame) && !toplevel)
+            toplevel = w;
     }
-    return NULL;
+    return toplevel;
 }
 
 static GLFWbool createXdgPopupShellObjects(_GLFWwindow* window,
@@ -1531,7 +1536,7 @@ static GLFWbool createXdgPopupShellObjects(_GLFWwindow* window,
     // toplevel, so when the parent is itself a popup, rebase onto its origin.
     int px = window->wl.pendingPosSet ? window->wl.pendingPosX : 0;
     int py = window->wl.pendingPosSet ? window->wl.pendingPosY : 0;
-    if (parent->wl.xdg.popup && parent->wl.pendingPosSet)
+    if (window->wl.pendingPosSet && parent->wl.xdg.popup && parent->wl.pendingPosSet)
     {
         px -= parent->wl.pendingPosX;
         py -= parent->wl.pendingPosY;
@@ -3277,13 +3282,6 @@ void _glfwDestroyWindowWayland(_GLFWwindow* window)
     if (window->wl.surface == _glfw.wl.pointerSurface)
         _glfw.wl.pointerSurface = NULL;
 
-    // Drop any popup's back-reference to this window so it can't dangle.
-    for (_GLFWwindow* w = _glfw.windowListHead; w; w = w->next)
-    {
-        if (w->popupParent == window)
-            w->popupParent = NULL;
-    }
-
     if (window == _glfw.wl.keyboardFocus)
     {
         struct itimerspec timer = {0};
@@ -3317,6 +3315,16 @@ void _glfwDestroyWindowWayland(_GLFWwindow* window)
         window->context.destroy(window);
 
     destroyShellObjects(window);
+
+    // Drop any popup's back-reference to this window so it can't dangle. Must
+    // run after destroyShellObjects: its LIFO child-popup teardown locates
+    // children via popupParent, so clearing the links any earlier would let a
+    // parent popup be destroyed before its child (a Wayland protocol error).
+    for (_GLFWwindow* w = _glfw.windowListHead; w; w = w->next)
+    {
+        if (w->popupParent == window)
+            w->popupParent = NULL;
+    }
 
     if (window->wl.fallback.buffer)
         wl_buffer_destroy(window->wl.fallback.buffer);
