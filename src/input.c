@@ -828,13 +828,14 @@ GLFWAPI void glfwSetCursorPos(GLFWwindow* handle, double xpos, double ypos)
 
     if (window->cursorMode == GLFW_CURSOR_DISABLED)
     {
-        // Only update the accumulated position if the cursor is disabled
         window->virtualCursorPosX = xpos;
         window->virtualCursorPosY = ypos;
+        // Also forward to the platform so Wayland can latch a
+        // set_cursor_position_hint before the lock is destroyed.
+        _glfw.platform.setCursorPos(window, xpos, ypos);
     }
     else
     {
-        // Update system cursor position
         _glfw.platform.setCursorPos(window, xpos, ypos);
     }
 }

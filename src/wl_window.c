@@ -4004,8 +4004,16 @@ void _glfwGetCursorPosWayland(_GLFWwindow* window, double* xpos, double* ypos)
 
 void _glfwSetCursorPosWayland(_GLFWwindow* window, double x, double y)
 {
-    _glfwInputError(GLFW_FEATURE_UNAVAILABLE,
-                    "Wayland: The platform does not support setting the cursor position");
+    if (window->wl.lockedPointer)
+    {
+        window->wl.cursorPosHintSet = GLFW_TRUE;
+        window->wl.cursorPosHintX = x;
+        window->wl.cursorPosHintY = y;
+        zwp_locked_pointer_v1_set_cursor_position_hint(
+            window->wl.lockedPointer,
+            wl_fixed_from_double(x),
+            wl_fixed_from_double(y));
+    }
 }
 
 void _glfwSetCursorModeWayland(_GLFWwindow* window, int mode)
@@ -4215,6 +4223,17 @@ static void unlockPointer(_GLFWwindow* window)
 {
     zwp_relative_pointer_v1_destroy(window->wl.relativePointer);
     window->wl.relativePointer = NULL;
+
+    if (window->wl.cursorPosHintSet)
+    {
+        zwp_locked_pointer_v1_set_cursor_position_hint(
+            window->wl.lockedPointer,
+            wl_fixed_from_double(window->wl.cursorPosHintX),
+            wl_fixed_from_double(window->wl.cursorPosHintY));
+        wl_surface_commit(window->wl.surface);
+        wl_display_flush(_glfw.wl.display);
+        window->wl.cursorPosHintSet = GLFW_FALSE;
+    }
 
     zwp_locked_pointer_v1_destroy(window->wl.lockedPointer);
     window->wl.lockedPointer = NULL;

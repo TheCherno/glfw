@@ -446,6 +446,10 @@ typedef struct _GLFWwindowWayland
     struct zwp_locked_pointer_v1*   lockedPointer;
     struct zwp_confined_pointer_v1* confinedPointer;
 
+    GLFWbool                        cursorPosHintSet;
+    double                          cursorPosHintX;
+    double                          cursorPosHintY;
+
     struct zwp_idle_inhibitor_v1*   idleInhibitor;
     struct xdg_activation_token_v1* activationToken;
 
