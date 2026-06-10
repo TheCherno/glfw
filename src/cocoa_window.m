@@ -408,6 +408,30 @@ static const NSRange kEmptyRange = { NSNotFound, 0 };
                          GLFW_MOUSE_BUTTON_LEFT,
                          GLFW_PRESS,
                          translateFlags([event modifierFlags]));
+
+    // If the app's titlebar hit test says we're in the drag zone,
+    // hand off to the native window drag (no jitter).
+    if (window->callbacks.tbhittest)
+    {
+        const NSRect contentRect = [window->ns.view frame];
+        const NSPoint pos = [event locationInWindow];
+        const int x = (int)pos.x;
+        const int y = (int)(contentRect.size.height - pos.y);
+        // Skip native drag near window edges to allow resize
+        const int border = 5;
+        const int w = (int)contentRect.size.width;
+        const int h = (int)contentRect.size.height;
+        if (x < border || x > w - border || y < border || y > h - border)
+            return;
+
+        int hit = 0;
+        window->callbacks.tbhittest((GLFWwindow*)window, x, y, &hit);
+        if (hit)
+        {
+            [window->ns.object performWindowDragWithEvent:event];
+            return;
+        }
+    }
 }
 
 - (void)mouseDragged:(NSEvent *)event
