@@ -95,7 +95,8 @@ static void updateCursorMode(_GLFWwindow* window)
         _glfwGetCursorPosCocoa(window,
                                &_glfw.ns.restoreCursorPosX,
                                &_glfw.ns.restoreCursorPosY);
-        _glfwCenterCursorInContentArea(window);
+        // Don't centre the cursor. The next line freezes it anyway, and the
+        // warp from centring can leak into your first mouse move and snap the view.
         CGAssociateMouseAndMouseCursorPosition(false);
     }
     else if (_glfw.ns.disabledCursorWindow == window)
