@@ -1071,12 +1071,19 @@ static LRESULT CALLBACK windowProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM l
             const int resizeBorderX = GetSystemMetrics(SM_CXFRAME);
             const int resizeBorderY = GetSystemMetrics(SM_CYFRAME);
 
+            // When maximized, Windows expands the window rect past the monitor on every
+            // side by the resize frame PLUS the padded border. The resize-border insets
+            // below only remove the frame, so the client still overhangs each edge by the
+            // padded border (content bleeds off-screen; the cursor, clamped to the visible
+            // screen, can't reach those edges). Fold the padded border in when maximized.
+            const int maximizedPad = IsZoomed(hWnd) ? GetSystemMetrics(SM_CXPADDEDBORDER) : 0;
+
             NCCALCSIZE_PARAMS* params = (NCCALCSIZE_PARAMS*)lParam;
             RECT* requestedClientRect = params->rgrc;
 
-            requestedClientRect->right -= resizeBorderX;
-            requestedClientRect->left += resizeBorderX;
-            requestedClientRect->bottom -= resizeBorderY;
+            requestedClientRect->right -= resizeBorderX + maximizedPad;
+            requestedClientRect->left += resizeBorderX + maximizedPad;
+            requestedClientRect->bottom -= resizeBorderY + maximizedPad;
 
             //
             // NOTE(Yan):
@@ -1095,11 +1102,10 @@ static LRESULT CALLBACK windowProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM l
             // works once you click and drag. This works on both
             // Windows 10 & 11, so we'll keep that for now.
             //
-            // When maximized, Windows pads the proposed window rect by
-            // resizeBorderY on top so the resize cursor is reachable past
-            // the monitor edge. Undo that pad so the client area sits flush
-            // with the monitor top instead of bleeding off-screen.
-            requestedClientRect->top += IsZoomed(hWnd) ? resizeBorderY : 0;
+            // When maximized, Windows pads the proposed window rect on top by the resize
+            // frame plus the padded border. Undo both so the client sits flush with the
+            // monitor top instead of bleeding off-screen.
+            requestedClientRect->top += (IsZoomed(hWnd) ? resizeBorderY : 0) + maximizedPad;
 
             // NOTE(Yan): seems to make no difference what we return here,
             //            was originally 0
