@@ -72,7 +72,11 @@ static void showCursor(_GLFWwindow* window)
 //
 static void updateCursorImage(_GLFWwindow* window)
 {
-    if (window->cursorMode == GLFW_CURSOR_NORMAL)
+    // A captured cursor stays visible (it's only meant to be clipped to the window), so keep
+    // it shown like the Win32 backend does. Without this the viewport gizmo drag, which uses
+    // captured mode, would leave macOS with no visible cursor.
+    if (window->cursorMode == GLFW_CURSOR_NORMAL ||
+        window->cursorMode == GLFW_CURSOR_CAPTURED)
     {
         showCursor(window);
 
@@ -1689,11 +1693,9 @@ void _glfwSetCursorModeCocoa(_GLFWwindow* window, int mode)
 {
     @autoreleasepool {
 
-    if (mode == GLFW_CURSOR_CAPTURED)
-    {
-        _glfwInputError(GLFW_FEATURE_UNIMPLEMENTED,
-                        "Cocoa: Captured cursor mode not yet implemented");
-    }
+    // Captured mode is only partially supported (the cursor stays visible but isn't hard
+    // clipped to the window — the viewport wrap logic keeps it contained instead), so we
+    // don't emit an "unimplemented" error the way stock GLFW does.
 
     if (_glfwWindowFocusedCocoa(window))
         updateCursorMode(window);
