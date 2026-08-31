@@ -409,6 +409,26 @@ void _glfwInputDrop(_GLFWwindow* window, int count, const char** paths)
         window->callbacks.drop((GLFWwindow*) window, count, paths);
 }
 
+// Notifies shared code of drag-and-drop hover on a window, see glfwStartDragDrop
+//
+void _glfwInputDragDrop(_GLFWwindow* window, int phase, double xpos, double ypos, const char* type)
+{
+    assert(window != NULL);
+
+    if (window->callbacks.dragDrop)
+        window->callbacks.dragDrop((GLFWwindow*) window, phase, xpos, ypos, type);
+}
+
+// Notifies shared code that a glfwStartDragDrop session on a window has ended
+//
+void _glfwInputDragEnd(_GLFWwindow* window, GLFWbool consumed)
+{
+    assert(window != NULL);
+
+    if (window->callbacks.dragEnd)
+        window->callbacks.dragEnd((GLFWwindow*) window, consumed);
+}
+
 // Notifies shared code of a joystick connection or disconnection
 //
 void _glfwInputJoystick(_GLFWjoystick* js, int event)
@@ -1039,6 +1059,28 @@ GLFWAPI GLFWdropfun glfwSetDropCallback(GLFWwindow* handle, GLFWdropfun cbfun)
     assert(window != NULL);
 
     _GLFW_SWAP(GLFWdropfun, window->callbacks.drop, cbfun);
+    return cbfun;
+}
+
+GLFWAPI GLFWdragdropfun glfwSetDragDropCallback(GLFWwindow* handle, GLFWdragdropfun cbfun)
+{
+    _GLFW_REQUIRE_INIT_OR_RETURN(NULL);
+
+    _GLFWwindow* window = (_GLFWwindow*) handle;
+    assert(window != NULL);
+
+    _GLFW_SWAP(GLFWdragdropfun, window->callbacks.dragDrop, cbfun);
+    return cbfun;
+}
+
+GLFWAPI GLFWdragendfun glfwSetDragEndCallback(GLFWwindow* handle, GLFWdragendfun cbfun)
+{
+    _GLFW_REQUIRE_INIT_OR_RETURN(NULL);
+
+    _GLFWwindow* window = (_GLFWwindow*) handle;
+    assert(window != NULL);
+
+    _GLFW_SWAP(GLFWdragendfun, window->callbacks.dragEnd, cbfun);
     return cbfun;
 }
 

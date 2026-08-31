@@ -907,6 +907,32 @@ GLFWAPI void glfwDragWindow(GLFWwindow* handle)
         _glfw.platform.dragWindow(window);
 }
 
+GLFWAPI int glfwStartDragDrop(GLFWwindow* handle, const char* type)
+{
+    _GLFW_REQUIRE_INIT_OR_RETURN(GLFW_FALSE);
+
+    _GLFWwindow* window = (_GLFWwindow*) handle;
+    assert(window != NULL);
+    assert(type != NULL);
+
+    if (_glfw.platform.startDragDrop)
+        return _glfw.platform.startDragDrop(window, type);
+    return GLFW_FALSE;
+}
+
+GLFWAPI int glfwSetDragDropIcon(GLFWwindow* handle, const GLFWimage* image, int xhot, int yhot)
+{
+    _GLFW_REQUIRE_INIT_OR_RETURN(GLFW_FALSE);
+
+    _GLFWwindow* window = (_GLFWwindow*) handle;
+    assert(window != NULL);
+    assert(image != NULL);
+
+    if (_glfw.platform.setDragDropIcon)
+        return _glfw.platform.setDragDropIcon(window, image, xhot, yhot);
+    return GLFW_FALSE;
+}
+
 GLFWAPI int glfwGetWindowAttrib(GLFWwindow* handle, int attrib)
 {
     _GLFW_REQUIRE_INIT_OR_RETURN(0);

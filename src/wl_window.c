@@ -568,6 +568,16 @@ static uint32_t detectResizeEdge(_GLFWwindow* window, int x, int y)
     // hit zone than decorated ones, where a resize can be started from slightly outside the window.
     const int border = 8;
 
+    // Nothing to detect once the position has left the window's own extended hit-test rect
+    // (its bounds plus the border's own outward allowance) on either axis: an implicit
+    // pointer grab (see activePointerSurface's own comment) can keep feeding this window
+    // motion coordinates far outside its own bounds while the cursor is visually over an
+    // entirely different window. Checking each edge's own axis alone isn't enough --
+    // e.g. y landing near the top band still isn't "on the top edge" if x is nowhere near
+    // this window at all.
+    if (x < -border || x >= w + border || y < -border || y >= h + border)
+        return XDG_TOPLEVEL_RESIZE_EDGE_NONE;
+
     const GLFWbool onLeft   = (x < border);
     const GLFWbool onRight  = (x >= w - border);
     const GLFWbool onTop    = (y < border);
@@ -1669,9 +1679,6 @@ static void issuePendingDragMove(_GLFWwindow* window)
     if (_glfw.wl.pointerButtonsDown <= 0)
         return;
 
-    if (startToplevelDragSession(window, window->wl.dragPendingSerial))
-        return;
-
     struct xdg_toplevel* toplevel = window->wl.xdg.toplevel;
     if (!toplevel && window->wl.libdecor.frame)
         toplevel = libdecor_frame_get_xdg_toplevel(window->wl.libdecor.frame);
@@ -1680,7 +1687,7 @@ static void issuePendingDragMove(_GLFWwindow* window)
 
     xdg_toplevel_move(toplevel, _glfw.wl.seat, window->wl.dragPendingSerial);
 
-    // Fallback path: compositor swallows release, synthesize one.
+    // Compositor swallows the release; synthesize one.
     if (_glfw.wl.pointerButtonsDown > 0)
         _glfw.wl.pointerButtonsDown--;
     _glfwInputMouseClick(window, GLFW_MOUSE_BUTTON_LEFT, GLFW_RELEASE, 0);
@@ -2160,11 +2167,17 @@ static void updateResizeEdge(_GLFWwindow* window)
 
 static void processPointerMotion(double xpos, double ypos)
 {
-    // Deliberately still `pointerSurface`, not the implicit-grab fallback: feeding motion
-    // for a window the cursor's left corrupted frame pacing (a stray resize pump landed
-    // mid-frame). Only the button path below needs the fallback.
-    _GLFWwindow* window = wl_surface_get_user_data(_glfw.wl.pointerSurface);
-    if (window->wl.surface == _glfw.wl.pointerSurface)
+    // `activePointerSurface()`, not bare `pointerSurface`: without it, this window's own
+    // cursor position (and everything read from it -- io.MousePos, drag preview placement,
+    // which of this app's own windows a drag is currently hovering) freezes the instant a
+    // leave arrives for it, even though the implicit grab means this is still the surface
+    // actually receiving motion. A previous attempt at this same fallback here caused a
+    // frame-pacing regression via unbounded values reaching updateResizeEdge below --
+    // fixed at the source in detectResizeEdge, which now rejects any position outside this
+    // window's own extended bounds instead of misreading it as sitting on an edge.
+    struct wl_surface* surface = activePointerSurface();
+    _GLFWwindow* window = wl_surface_get_user_data(surface);
+    if (window->wl.surface == surface)
     {
         if (window->cursorMode != GLFW_CURSOR_DISABLED)
         {
@@ -2339,7 +2352,7 @@ static void pointerHandleMotion(void* userData,
                                 wl_fixed_t sx,
                                 wl_fixed_t sy)
 {
-    if (!_glfw.wl.pointerSurface)
+    if (!activePointerSurface())
         return;
 
     const double xpos = wl_fixed_to_double(sx);
@@ -2460,7 +2473,7 @@ static void pointerHandleFrame(void* userData, struct wl_pointer* pointer)
             processPointerEnterSurface(_glfw.wl.pending.pointerSurface);
     }
 
-    if (_glfw.wl.pointerSurface && (_glfw.wl.pending.events & GLFW_PENDING_MOTION))
+    if (activePointerSurface() && (_glfw.wl.pending.events & GLFW_PENDING_MOTION))
         processPointerMotion(_glfw.wl.pending.pointerX, _glfw.wl.pending.pointerY);
 
     if (_glfw.wl.pending.events & GLFW_PENDING_BUTTON)
@@ -2886,6 +2899,8 @@ static void dataOfferHandleOffer(void* userData,
                 _glfw.wl.offers[i].text_uri_list = GLFW_TRUE;
             else if (strcmp(mimeType, GLFW_WAYLAND_WINDOW_DRAG_MIME) == 0)
                 _glfw.wl.offers[i].glfw_window_drag = GLFW_TRUE;
+            else if (_glfw.wl.dragDropSession.type && strcmp(mimeType, _glfw.wl.dragDropSession.type) == 0)
+                _glfw.wl.offers[i].dragdrop = GLFW_TRUE;
 
             break;
         }
@@ -2995,6 +3010,25 @@ static void dataDeviceHandleEnter(void* userData,
                 const double ypos = wl_fixed_to_double(y);
                 _glfwInputCursorPos(window, xpos, ypos);
             }
+            else if (_glfw.wl.offers[i].dragdrop)
+            {
+                _glfw.wl.dragOffer = offer;
+                _glfw.wl.dragFocus = window;
+                _glfw.wl.dragSerial = serial;
+
+                wl_data_offer_accept(offer, serial, _glfw.wl.dragDropSession.type);
+                if (wl_data_offer_get_version(offer) >= 3)
+                {
+                    wl_data_offer_set_actions(offer,
+                        WL_DATA_DEVICE_MANAGER_DND_ACTION_MOVE,
+                        WL_DATA_DEVICE_MANAGER_DND_ACTION_MOVE);
+                }
+
+                _glfw.wl.dragLastX = wl_fixed_to_double(x);
+                _glfw.wl.dragLastY = wl_fixed_to_double(y);
+                _glfwInputDragDrop(window, GLFW_DRAGDROP_ENTER,
+                                   _glfw.wl.dragLastX, _glfw.wl.dragLastY, _glfw.wl.dragDropSession.type);
+            }
         }
     }
 
@@ -3020,6 +3054,9 @@ static void dataDeviceHandleLeave(void* userData,
         focus->virtualCursorPosY = -DBL_MAX;
         _glfwInputCursorPos(focus, -100000.0, -100000.0);
     }
+
+    if (_glfw.wl.dragDropSession.source && _glfw.wl.dragFocus)
+        _glfwInputDragDrop(_glfw.wl.dragFocus, GLFW_DRAGDROP_LEAVE, 0.0, 0.0, _glfw.wl.dragDropSession.type);
 
     if (_glfw.wl.dragOffer)
     {
@@ -3059,6 +3096,13 @@ static void dataDeviceHandleMotion(void* userData,
             }
         }
     }
+    else if (_glfw.wl.dragFocus && _glfw.wl.dragDropSession.source)
+    {
+        _glfw.wl.dragLastX = wl_fixed_to_double(x);
+        _glfw.wl.dragLastY = wl_fixed_to_double(y);
+        _glfwInputDragDrop(_glfw.wl.dragFocus, GLFW_DRAGDROP_MOTION,
+                           _glfw.wl.dragLastX, _glfw.wl.dragLastY, _glfw.wl.dragDropSession.type);
+    }
 }
 
 static void dataDeviceHandleDrop(void* userData,
@@ -3067,10 +3111,17 @@ static void dataDeviceHandleDrop(void* userData,
     if (!_glfw.wl.dragOffer)
         return;
 
-    // No payload for our own toplevel drag; just complete the protocol so
-    // the compositor stops routing input to drag-and-drop handlers.
-    if (_glfw.wl.toplevelDragSession.source)
+    // No payload for our own toplevel drag or glfwStartDragDrop session; just complete
+    // the protocol so the compositor stops routing input to drag-and-drop handlers.
+    if (_glfw.wl.toplevelDragSession.source || _glfw.wl.dragDropSession.source)
     {
+        if (_glfw.wl.dragDropSession.source && _glfw.wl.dragFocus)
+        {
+            _glfw.wl.dragDropSession.dropReceived = GLFW_TRUE;
+            _glfwInputDragDrop(_glfw.wl.dragFocus, GLFW_DRAGDROP_DROP,
+                               _glfw.wl.dragLastX, _glfw.wl.dragLastY, _glfw.wl.dragDropSession.type);
+        }
+
         // wl_data_offer.finish and set_actions are v3+. Calling either on
         // an older offer raises a protocol error (which aborts the client).
         if (wl_data_offer_get_version(_glfw.wl.dragOffer) >= 3)
@@ -3811,13 +3862,6 @@ void _glfwDragWindowWayland(_GLFWwindow* window)
     if (!_glfw.wl.seat || !_glfw.wl.pointerButtonSerial)
         return;
 
-    // Already dragging this window.
-    if (_glfw.wl.toplevelDragSession.source &&
-        _glfw.wl.toplevelDragSession.window == window)
-    {
-        return;
-    }
-
     // Defer until mapped; dragging an unmapped surface crashes KWin.
     if (!window->wl.mapped)
     {
@@ -3826,11 +3870,12 @@ void _glfwDragWindowWayland(_GLFWwindow* window)
         return;
     }
 
-    // Preferred: xdg_toplevel_drag_v1 delivers drag-and-drop events for hit-testing.
-    if (startToplevelDragSession(window, _glfw.wl.pointerButtonSerial))
-        return;
-
-    // Fallback for compositors that don't advertise the manager global.
+    // Deliberately not xdg_toplevel_drag_v1 (startToplevelDragSession): that combined
+    // move+drag protocol leaves the pointer button held (see its own comment) so a
+    // caller mid-drag keeps seeing enter/motion/leave for cross-window hit-testing --
+    // exactly wrong for an ordinary titlebar press with no such gesture already in
+    // flight, where it instead leaks into whatever ordinary widget the window being
+    // moved happens to still be reporting hover/press for underneath the cursor.
     struct xdg_toplevel* toplevel = window->wl.xdg.toplevel;
     if (!toplevel && window->wl.libdecor.frame)
         toplevel = libdecor_frame_get_xdg_toplevel(window->wl.libdecor.frame);
@@ -3843,6 +3888,164 @@ void _glfwDragWindowWayland(_GLFWwindow* window)
     if (_glfw.wl.pointerButtonsDown > 0)
         _glfw.wl.pointerButtonsDown--;
     _glfwInputMouseClick(window, GLFW_MOUSE_BUTTON_LEFT, GLFW_RELEASE, 0);
+}
+
+static void endDragDropSession(void)
+{
+    _GLFWwindow* window = _glfw.wl.dragDropSession.window;
+
+    if (!_glfw.wl.dragDropSession.source)
+        return;
+
+    // Ground truth for whether this landed anywhere, not the source-side
+    // dnd_drop_performed/cancelled distinction the three callers below might otherwise
+    // hand in: at least one compositor sends dnd_drop_performed unconditionally on
+    // release regardless of whether any surface actually accepted the drop (observed
+    // with dragFocus already null at that point), making that distinction alone
+    // unreliable. A real GLFW_DRAGDROP_DROP for one of this application's own windows
+    // is what dropReceived actually tracks.
+    GLFWbool consumed = _glfw.wl.dragDropSession.dropReceived;
+
+    wl_data_source_destroy(_glfw.wl.dragDropSession.source);
+    _glfw.wl.dragDropSession.source = NULL;
+    _glfw.wl.dragDropSession.window = NULL;
+    _glfw.wl.dragDropSession.dropReceived = GLFW_FALSE;
+    _glfw_free(_glfw.wl.dragDropSession.type);
+    _glfw.wl.dragDropSession.type = NULL;
+
+    if (_glfw.wl.dragDropSession.iconBuffer)
+    {
+        wl_buffer_destroy(_glfw.wl.dragDropSession.iconBuffer);
+        _glfw.wl.dragDropSession.iconBuffer = NULL;
+    }
+    if (_glfw.wl.dragDropSession.iconSurface)
+    {
+        wl_surface_destroy(_glfw.wl.dragDropSession.iconSurface);
+        _glfw.wl.dragDropSession.iconSurface = NULL;
+    }
+
+    // The compositor consumed the real release; account for it and synthesize
+    // one so the application sees "drag ended", matching endToplevelDragSession.
+    if (_glfw.wl.pointerButtonsDown > 0)
+        _glfw.wl.pointerButtonsDown--;
+    if (window)
+    {
+        _glfwInputDragEnd(window, consumed);
+        _glfwInputMouseClick(window, GLFW_MOUSE_BUTTON_LEFT, GLFW_RELEASE, 0);
+    }
+}
+
+static void dragDropSourceHandleTarget(void* data,
+                                       struct wl_data_source* source,
+                                       const char* mime) { (void)data; (void)source; (void)mime; }
+
+static void dragDropSourceHandleSend(void* data, struct wl_data_source* source,
+                                     const char* mime, int32_t fd)
+{
+    // No payload is transferred -- this source exists only for real per-surface
+    // enter/motion/leave/drop routing (see glfwStartDragDrop's own comment).
+    (void)data; (void)source; (void)mime;
+    close(fd);
+}
+
+static void dragDropSourceHandleCancelled(void* data, struct wl_data_source* source)
+{
+    (void)data; (void)source;
+    endDragDropSession();
+}
+
+static void dragDropSourceHandleDndDropPerformed(void* data, struct wl_data_source* source)
+{
+    (void)data; (void)source;
+    // Clean up immediately; dnd_finished may not fire if the drop landed
+    // on a foreign client. endDragDropSession is idempotent.
+    endDragDropSession();
+}
+
+static void dragDropSourceHandleDndFinished(void* data, struct wl_data_source* source)
+{
+    (void)data; (void)source;
+    endDragDropSession();
+}
+
+static void dragDropSourceHandleAction(void* data, struct wl_data_source* source,
+                                       uint32_t action) { (void)data; (void)source; (void)action; }
+
+static const struct wl_data_source_listener dragDropSourceListener =
+{
+    dragDropSourceHandleTarget,
+    dragDropSourceHandleSend,
+    dragDropSourceHandleCancelled,
+    dragDropSourceHandleDndDropPerformed,
+    dragDropSourceHandleDndFinished,
+    dragDropSourceHandleAction,
+};
+
+GLFWbool _glfwStartDragDropWayland(_GLFWwindow* window, const char* type)
+{
+    if (!_glfw.wl.seat || !_glfw.wl.pointerButtonSerial ||
+        !_glfw.wl.dataDeviceManager || !_glfw.wl.dataDevice)
+    {
+        return GLFW_FALSE;
+    }
+
+    // One session at a time.
+    if (_glfw.wl.dragDropSession.source)
+        return GLFW_FALSE;
+
+    struct wl_data_source* source =
+        wl_data_device_manager_create_data_source(_glfw.wl.dataDeviceManager);
+    if (!source)
+        return GLFW_FALSE;
+
+    wl_data_source_add_listener(source, &dragDropSourceListener, NULL);
+    wl_data_source_offer(source, type);
+
+    // Without a negotiated action, v3+ compositors won't deliver
+    // dnd_drop_performed / dnd_finished.
+    if (wl_data_source_get_version(source) >= 3)
+        wl_data_source_set_actions(source, WL_DATA_DEVICE_MANAGER_DND_ACTION_MOVE);
+
+    _glfw.wl.dragDropSession.source = source;
+    _glfw.wl.dragDropSession.window = window;
+    _glfw.wl.dragDropSession.type = _glfw_strdup(type);
+
+    // Created empty -- glfwSetDragDropIcon attaches a real buffer to it once the
+    // application has rendered one, which can only happen after this call returns
+    // (the icon typically depicts whatever's being dragged, which this same call is
+    // what starts dragging). An empty surface is a perfectly normal drag icon in the
+    // meantime; the compositor just has nothing to draw yet.
+    _glfw.wl.dragDropSession.iconSurface = wl_compositor_create_surface(_glfw.wl.compositor);
+
+    wl_data_device_start_drag(_glfw.wl.dataDevice, source, window->wl.surface,
+                              _glfw.wl.dragDropSession.iconSurface, _glfw.wl.pointerButtonSerial);
+    return GLFW_TRUE;
+}
+
+GLFWbool _glfwSetDragDropIconWayland(_GLFWwindow* window, const GLFWimage* image, int xhot, int yhot)
+{
+    if (!_glfw.wl.dragDropSession.source || !_glfw.wl.dragDropSession.iconSurface)
+        return GLFW_FALSE;
+
+    struct wl_buffer* buffer = createShmBuffer(image);
+    if (!buffer)
+        return GLFW_FALSE;
+
+    if (_glfw.wl.dragDropSession.iconBuffer)
+        wl_buffer_destroy(_glfw.wl.dragDropSession.iconBuffer);
+    _glfw.wl.dragDropSession.iconBuffer = buffer;
+
+    // No hotspot offset applied (unlike wl_pointer_set_cursor, start_drag's icon has
+    // no dedicated hotspot parameter) -- the icon's own top-left tracks the cursor.
+    // xhot/yhot are accepted for parity with the cursor-image API and future backends
+    // where a hotspot is meaningful; a future revision could honor them here via
+    // wl_surface_offset (v5+).
+    (void)window; (void)xhot; (void)yhot;
+
+    wl_surface_attach(_glfw.wl.dragDropSession.iconSurface, buffer, 0, 0);
+    wl_surface_damage(_glfw.wl.dragDropSession.iconSurface, 0, 0, image->width, image->height);
+    wl_surface_commit(_glfw.wl.dragDropSession.iconSurface);
+    return GLFW_TRUE;
 }
 
 void _glfwSetWindowMonitorWayland(_GLFWwindow* window,
