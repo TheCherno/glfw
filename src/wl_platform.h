@@ -532,13 +532,11 @@ typedef struct _GLFWlibraryWayland
         // own comment for why content isn't required up front.
         struct wl_surface*              iconSurface;
         struct wl_buffer*                iconBuffer;
-        // Set the moment dataDeviceHandleDrop actually fires GLFW_DRAGDROP_DROP for
-        // one of this application's own windows -- the real ground truth for whether
-        // this session landed somewhere, unlike the source-side dnd_drop_performed/
-        // cancelled distinction endDragDropSession otherwise gets handed: at least one
-        // compositor sends dnd_drop_performed unconditionally on release regardless of
-        // whether any surface actually accepted the drop (observed with dragFocus
-        // already null), making that distinction alone unreliable.
+        // Only non-NULL when the compositor supports wp_viewporter. Created alongside
+        // `iconSurface` -- see glfwSetDragDropIcon's own comment for why it's needed.
+        struct wp_viewport*              iconViewport;
+        // Set the moment dataDeviceHandleDrop actually fires GLFW_DRAGDROP_DROP -- see
+        // endDragDropSession's own comment for why that's trusted over dnd_drop_performed.
         GLFWbool                         dropReceived;
     } dragDropSession;
 

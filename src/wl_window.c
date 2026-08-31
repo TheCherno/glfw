@@ -3897,13 +3897,10 @@ static void endDragDropSession(void)
     if (!_glfw.wl.dragDropSession.source)
         return;
 
-    // Ground truth for whether this landed anywhere, not the source-side
-    // dnd_drop_performed/cancelled distinction the three callers below might otherwise
-    // hand in: at least one compositor sends dnd_drop_performed unconditionally on
-    // release regardless of whether any surface actually accepted the drop (observed
-    // with dragFocus already null at that point), making that distinction alone
-    // unreliable. A real GLFW_DRAGDROP_DROP for one of this application's own windows
-    // is what dropReceived actually tracks.
+    // Not the source-side dnd_drop_performed/cancelled distinction: at least one
+    // compositor sends dnd_drop_performed unconditionally on release even when nothing
+    // accepted the drop (observed with dragFocus already null). dropReceived instead
+    // tracks a real GLFW_DRAGDROP_DROP landing on one of this application's own windows.
     GLFWbool consumed = _glfw.wl.dragDropSession.dropReceived;
 
     wl_data_source_destroy(_glfw.wl.dragDropSession.source);
@@ -3917,6 +3914,11 @@ static void endDragDropSession(void)
     {
         wl_buffer_destroy(_glfw.wl.dragDropSession.iconBuffer);
         _glfw.wl.dragDropSession.iconBuffer = NULL;
+    }
+    if (_glfw.wl.dragDropSession.iconViewport)
+    {
+        wp_viewport_destroy(_glfw.wl.dragDropSession.iconViewport);
+        _glfw.wl.dragDropSession.iconViewport = NULL;
     }
     if (_glfw.wl.dragDropSession.iconSurface)
     {
@@ -4016,6 +4018,11 @@ GLFWbool _glfwStartDragDropWayland(_GLFWwindow* window, const char* type)
     // what starts dragging). An empty surface is a perfectly normal drag icon in the
     // meantime; the compositor just has nothing to draw yet.
     _glfw.wl.dragDropSession.iconSurface = wl_compositor_create_surface(_glfw.wl.compositor);
+    if (_glfw.wl.viewporter)
+    {
+        _glfw.wl.dragDropSession.iconViewport =
+            wp_viewporter_get_viewport(_glfw.wl.viewporter, _glfw.wl.dragDropSession.iconSurface);
+    }
 
     wl_data_device_start_drag(_glfw.wl.dataDevice, source, window->wl.surface,
                               _glfw.wl.dragDropSession.iconSurface, _glfw.wl.pointerButtonSerial);
@@ -4040,10 +4047,22 @@ GLFWbool _glfwSetDragDropIconWayland(_GLFWwindow* window, const GLFWimage* image
     // xhot/yhot are accepted for parity with the cursor-image API and future backends
     // where a hotspot is meaningful; a future revision could honor them here via
     // wl_surface_offset (v5+).
-    (void)window; (void)xhot; (void)yhot;
+    (void)xhot; (void)yhot;
 
     wl_surface_attach(_glfw.wl.dragDropSession.iconSurface, buffer, 0, 0);
     wl_surface_damage(_glfw.wl.dragDropSession.iconSurface, 0, 0, image->width, image->height);
+
+    // `image` is sized in physical pixels, but `iconSurface` has no buffer_scale of its
+    // own; the viewport's destination size is what tells the compositor its correct
+    // logical size instead.
+    if (_glfw.wl.dragDropSession.iconViewport)
+    {
+        float xscale, yscale;
+        _glfwGetWindowContentScaleWayland(window, &xscale, &yscale);
+        wp_viewport_set_destination(_glfw.wl.dragDropSession.iconViewport,
+            (int)(image->width / xscale + 0.5f), (int)(image->height / yscale + 0.5f));
+    }
+
     wl_surface_commit(_glfw.wl.dragDropSession.iconSurface);
     return GLFW_TRUE;
 }
