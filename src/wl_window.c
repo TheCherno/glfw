@@ -2097,6 +2097,20 @@ static char* readDataOfferAsString(struct wl_data_offer* offer, const char* mime
     return string;
 }
 
+// Wayland keeps a surface receiving events while a button is held, even past a leave --
+// this fork didn't honor that, so dragging past a window's edge silently died.
+// `pointerButtonSurface`, recorded at press time and never cleared, is the fallback.
+static struct wl_surface* activePointerSurface(void)
+{
+    if (_glfw.wl.pointerSurface)
+        return _glfw.wl.pointerSurface;
+
+    if (_glfw.wl.pointerButtonsDown > 0)
+        return _glfw.wl.pointerButtonSurface;
+
+    return NULL;
+}
+
 static void processPointerEnterSurface(struct wl_surface* surface)
 {
     _glfw.wl.pointerSurface = surface;
@@ -2117,9 +2131,10 @@ static void processPointerLeaveSurface(struct wl_surface* surface)
     if (window->wl.surface == surface)
     {
         window->wl.resizeEdge = XDG_TOPLEVEL_RESIZE_EDGE_NONE;
-        // Suppress cursor-leave during toplevel drag so the app doesn't
-        // park the cursor at FLT_MAX. Drag-and-drop events provide position instead.
-        if (!_glfw.wl.toplevelDragSession.source)
+        // Suppress the `FLT_MAX` cursor-leave while a button's held or a toplevel drag is
+        // active -- position keeps coming from drag-and-drop events or the implicit-grab
+        // fallback instead.
+        if (!_glfw.wl.toplevelDragSession.source && _glfw.wl.pointerButtonsDown == 0)
             _glfwInputCursorEnter(window, GLFW_FALSE);
     }
 }
@@ -2145,6 +2160,9 @@ static void updateResizeEdge(_GLFWwindow* window)
 
 static void processPointerMotion(double xpos, double ypos)
 {
+    // Deliberately still `pointerSurface`, not the implicit-grab fallback: feeding motion
+    // for a window the cursor's left corrupted frame pacing (a stray resize pump landed
+    // mid-frame). Only the button path below needs the fallback.
     _GLFWwindow* window = wl_surface_get_user_data(_glfw.wl.pointerSurface);
     if (window->wl.surface == _glfw.wl.pointerSurface)
     {
@@ -2167,7 +2185,7 @@ static void processPointerMotion(double xpos, double ypos)
     }
 }
 
-static void processPointerButton(int button, int action, uint32_t time)
+static void processPointerButton(struct wl_surface* surface, int button, int action, uint32_t time)
 {
     // Compositor sends a spurious release when transferring the grab to drag-and-drop.
     // Suppress it; endToplevelDragSession synthesizes the real release.
@@ -2177,8 +2195,8 @@ static void processPointerButton(int button, int action, uint32_t time)
         return;
     }
 
-    _GLFWwindow* window = wl_surface_get_user_data(_glfw.wl.pointerSurface);
-    if (window->wl.surface == _glfw.wl.pointerSurface)
+    _GLFWwindow* window = wl_surface_get_user_data(surface);
+    if (window->wl.surface == surface)
     {
         // For undecorated windows, provide OS-level resize borders
         // and titlebar drag via xdg_toplevel — matching the X11
@@ -2344,7 +2362,7 @@ static void pointerHandleButton(void* userData,
                                 uint32_t buttonID,
                                 uint32_t state)
 {
-    if (!_glfw.wl.pointerSurface)
+    if (!activePointerSurface())
         return;
 
     _glfw.wl.serial = serial;
@@ -2384,7 +2402,8 @@ static void pointerHandleButton(void* userData,
     const int button = buttonID - BTN_LEFT;
     const int action = (state == WL_POINTER_BUTTON_STATE_PRESSED);
 
-    _GLFWwindow* window = wl_surface_get_user_data(_glfw.wl.pointerSurface);
+    struct wl_surface* activeSurface = activePointerSurface();
+    _GLFWwindow* window = wl_surface_get_user_data(activeSurface);
     if (window->wl.fallback.decorations)
     {
         if (action == GLFW_PRESS)
@@ -2397,9 +2416,10 @@ static void pointerHandleButton(void* userData,
         _glfw.wl.pending.button = button;
         _glfw.wl.pending.action = action;
         _glfw.wl.pending.buttonTime = time;
+        _glfw.wl.pending.buttonSurface = activeSurface;
     }
     else
-        processPointerButton(button, action, time);
+        processPointerButton(activeSurface, button, action, time);
 }
 
 static void pointerHandleAxis(void* userData,
@@ -2440,19 +2460,19 @@ static void pointerHandleFrame(void* userData, struct wl_pointer* pointer)
             processPointerEnterSurface(_glfw.wl.pending.pointerSurface);
     }
 
-    if (!_glfw.wl.pointerSurface)
-        return;
-
-    if (_glfw.wl.pending.events & GLFW_PENDING_MOTION)
+    if (_glfw.wl.pointerSurface && (_glfw.wl.pending.events & GLFW_PENDING_MOTION))
         processPointerMotion(_glfw.wl.pending.pointerX, _glfw.wl.pending.pointerY);
 
     if (_glfw.wl.pending.events & GLFW_PENDING_BUTTON)
-        processPointerButton(_glfw.wl.pending.button, _glfw.wl.pending.action, _glfw.wl.pending.buttonTime);
+        processPointerButton(_glfw.wl.pending.buttonSurface, _glfw.wl.pending.button, _glfw.wl.pending.action, _glfw.wl.pending.buttonTime);
 
-    if (_glfw.wl.pending.events & GLFW_PENDING_DISCRETE)
-        processPointerScroll(_glfw.wl.pending.discreteX, _glfw.wl.pending.discreteY);
-    else if (_glfw.wl.pending.events & GLFW_PENDING_SCROLL)
-        processPointerScroll(_glfw.wl.pending.scrollX, _glfw.wl.pending.scrollY);
+    if (_glfw.wl.pointerSurface)
+    {
+        if (_glfw.wl.pending.events & GLFW_PENDING_DISCRETE)
+            processPointerScroll(_glfw.wl.pending.discreteX, _glfw.wl.pending.discreteY);
+        else if (_glfw.wl.pending.events & GLFW_PENDING_SCROLL)
+            processPointerScroll(_glfw.wl.pending.scrollX, _glfw.wl.pending.scrollY);
+    }
 
     memset(&_glfw.wl.pending, 0, sizeof(_glfw.wl.pending));
 }

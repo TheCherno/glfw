@@ -554,6 +554,10 @@ typedef struct _GLFWlibraryWayland
         int                     button;
         int                     action;
         uint32_t                buttonTime;
+        // Captured at event time, not re-derived in `pointerHandleFrame`: `pointerButtonsDown`
+        // is already decremented by then for a release, so a fresh call there would
+        // wrongly read "no grab" for the last button released.
+        struct wl_surface*      buttonSurface;
     } pending;
 
     struct {
