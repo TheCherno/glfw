@@ -305,6 +305,17 @@ static const NSRange kEmptyRange = { NSNotFound, 0 };
 
     _glfwInputWindowFocus(window, GLFW_TRUE);
     updateCursorMode(window);
+
+    // The tracking area is ActiveInKeyWindow, so while this window was NOT key the pointer
+    // could cross into it without any mouseEntered firing (and activation doesn't send one
+    // retroactively -- nor would it with AssumeInside set, see updateTrackingAreas). A
+    // window keyed by a click with the pointer already inside it would keep routing input
+    // to whichever window the cursor last entered until the pointer happened to leave its
+    // frame and cross back in. Synthesize the missed enter.
+    const NSPoint pos = [window->ns.object mouseLocationOutsideOfEventStream];
+    const NSPoint viewPos = [window->ns.view convertPoint:pos fromView:nil];
+    if ([window->ns.view mouse:viewPos inRect:[window->ns.view bounds]])
+        _glfwInputCursorEnter(window, GLFW_TRUE);
 }
 
 - (void)windowDidResignKey:(NSNotification *)notification
@@ -573,12 +584,21 @@ static const NSRange kEmptyRange = { NSNotFound, 0 };
         [trackingArea release];
     }
 
-    const NSTrackingAreaOptions options = NSTrackingMouseEnteredAndExited |
-                                          NSTrackingActiveInKeyWindow |
-                                          NSTrackingEnabledDuringMouseDrag |
-                                          NSTrackingCursorUpdate |
-                                          NSTrackingInVisibleRect |
-                                          NSTrackingAssumeInside;
+    NSTrackingAreaOptions options = NSTrackingMouseEnteredAndExited |
+                                    NSTrackingActiveInKeyWindow |
+                                    NSTrackingEnabledDuringMouseDrag |
+                                    NSTrackingCursorUpdate |
+                                    NSTrackingInVisibleRect;
+
+    // AssumeInside tells AppKit the cursor is ALREADY inside, so the first event is an
+    // exit and the first genuine entry fires no mouseEntered at all. Hardcoding it (as
+    // upstream GLFW does) silently eats the first enter of any window created or rebuilt
+    // while the pointer is elsewhere -- a window opened from a control in another window
+    // stays hover-dead until the pointer leaves it once and comes back. Only assume
+    // inside when the pointer actually is.
+    const NSPoint mouse = [window->ns.object mouseLocationOutsideOfEventStream];
+    if ([self mouse:[self convertPoint:mouse fromView:nil] inRect:[self bounds]])
+        options |= NSTrackingAssumeInside;
 
     trackingArea = [[NSTrackingArea alloc] initWithRect:[self bounds]
                                                 options:options
