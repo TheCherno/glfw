@@ -189,6 +189,16 @@ typedef struct _GLFWlibraryNS
         PFN_LMGetKbdType GetKbdType;
         CFStringRef     kPropertyUnicodeKeyLayoutData;
     } tis;
+
+    // The active glfwStartDragDrop session, mirroring wl_window.c's dragDropSession --
+    // see _glfwStartDragDropCocoa. One at a time; type doubles as the pasteboard type
+    // every content view registers for while the session is live.
+    struct {
+        _GLFWwindow*    window;
+        char*           type;
+        id              session;      // NSDraggingSession*, retained for setDragDropIcon
+        GLFWbool        dropReceived;
+    } dragDropSession;
 } _GLFWlibraryNS;
 
 // Cocoa-specific per-monitor data
@@ -235,6 +245,8 @@ void _glfwHideWindowCocoa(_GLFWwindow* window);
 void _glfwRequestWindowAttentionCocoa(_GLFWwindow* window);
 void _glfwFocusWindowCocoa(_GLFWwindow* window);
 void _glfwDragWindowCocoa(_GLFWwindow* window);
+GLFWbool _glfwStartDragDropCocoa(_GLFWwindow* window, const char* type);
+GLFWbool _glfwSetDragDropIconCocoa(_GLFWwindow* window, const GLFWimage* image, int xhot, int yhot);
 void _glfwSetWindowMonitorCocoa(_GLFWwindow* window, _GLFWmonitor* monitor, int xpos, int ypos, int width, int height, int refreshRate);
 GLFWbool _glfwWindowFocusedCocoa(_GLFWwindow* window);
 GLFWbool _glfwWindowIconifiedCocoa(_GLFWwindow* window);

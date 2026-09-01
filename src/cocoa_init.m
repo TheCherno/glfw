@@ -508,6 +508,8 @@ GLFWbool _glfwConnectCocoa(int platformID, _GLFWplatform* platform)
         .requestWindowAttention = _glfwRequestWindowAttentionCocoa,
         .focusWindow = _glfwFocusWindowCocoa,
         .dragWindow = _glfwDragWindowCocoa,
+        .startDragDrop = _glfwStartDragDropCocoa,
+        .setDragDropIcon = _glfwSetDragDropIconCocoa,
         .setWindowMonitor = _glfwSetWindowMonitorCocoa,
         .windowFocused = _glfwWindowFocusedCocoa,
         .windowIconified = _glfwWindowIconifiedCocoa,

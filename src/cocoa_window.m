@@ -344,7 +344,90 @@ static const NSRange kEmptyRange = { NSNotFound, 0 };
 // Content view class for the GLFW window
 //------------------------------------------------------------------------
 
-@interface GLFWContentView : NSView <NSTextInputClient>
+// Keeps a content view's accepted drag types in sync with the active
+// glfwStartDragDrop session: registerForDraggedTypes replaces the previous
+// set, so the base types are always re-included. Called at view creation
+// (a window created MID-session -- e.g. one opened to receive the drag --
+// must accept the in-flight session too) and on every session start.
+static NSString* sessionPasteboardType(void);
+
+static void updateRegisteredDraggedTypes(NSView* view)
+{
+    NSMutableArray* types = [NSMutableArray arrayWithObject:NSPasteboardTypeURL];
+    if (_glfw.ns.dragDropSession.type)
+        [types addObject:sessionPasteboardType()];
+    [view registerForDraggedTypes:types];
+}
+
+// Pasteboard types must be valid UTIs (reverse-DNS, [A-Za-z0-9.-] only) --
+// NSPasteboardItem refuses anything else outright -- while glfwStartDragDrop
+// accepts any string (Wayland forwards it verbatim as a MIME type). Wrap the
+// session type in a private namespace and map invalid characters away. Lossy
+// mapping can't mismatch: only one session exists at a time, and source and
+// destination both derive the pasteboard type from the same stored string
+// through this same function. The application-facing callbacks still carry the
+// original type verbatim.
+static NSString* sessionPasteboardType(void)
+{
+    char buffer[256] = "org.glfw.dragdrop.";
+    size_t length = strlen(buffer);
+
+    for (const char* c = _glfw.ns.dragDropSession.type;
+         *c && length < sizeof(buffer) - 1;  c++)
+    {
+        if ((*c >= 'a' && *c <= 'z') || (*c >= 'A' && *c <= 'Z') ||
+            (*c >= '0' && *c <= '9') || *c == '.' || *c == '-')
+        {
+            buffer[length++] = *c;
+        }
+        else
+            buffer[length++] = '-';
+    }
+
+    buffer[length] = '\0';
+    return @(buffer);
+}
+
+// True when sender carries the active glfwStartDragDrop session's own type --
+// what routes it to _glfwInputDragDrop instead of the file-drop path below.
+static GLFWbool draggingMatchesSession(id <NSDraggingInfo> sender)
+{
+    if (!_glfw.ns.dragDropSession.type)
+        return GLFW_FALSE;
+
+    NSString* type = sessionPasteboardType();
+    return [[sender draggingPasteboard] availableTypeFromArray:@[type]] != nil;
+}
+
+// Mirrors wl_window.c's endDragDropSession: resolve consumed, tear the session
+// down, then tell the application the drag ended and synthesize the release the
+// OS drag machinery swallowed (the source view never sees the real mouseUp).
+// DragEnd first, release second -- the application's drag bookkeeping needs to
+// still be alive when the release arrives (see that function's own comment).
+static void endDragDropSessionCocoa(void)
+{
+    _GLFWwindow* window = _glfw.ns.dragDropSession.window;
+
+    if (!_glfw.ns.dragDropSession.type)
+        return;
+
+    const GLFWbool consumed = _glfw.ns.dragDropSession.dropReceived;
+
+    [(NSDraggingSession*)_glfw.ns.dragDropSession.session release];
+    _glfw.ns.dragDropSession.session = nil;
+    _glfw.ns.dragDropSession.window = NULL;
+    _glfw.ns.dragDropSession.dropReceived = GLFW_FALSE;
+    _glfw_free(_glfw.ns.dragDropSession.type);
+    _glfw.ns.dragDropSession.type = NULL;
+
+    if (window)
+    {
+        _glfwInputDragEnd(window, consumed);
+        _glfwInputMouseClick(window, GLFW_MOUSE_BUTTON_LEFT, GLFW_RELEASE, 0);
+    }
+}
+
+@interface GLFWContentView : NSView <NSTextInputClient, NSDraggingSource>
 {
     _GLFWwindow* window;
     NSTrackingArea* trackingArea;
@@ -367,7 +450,7 @@ static const NSRange kEmptyRange = { NSNotFound, 0 };
         markedText = [[NSMutableAttributedString alloc] init];
 
         [self updateTrackingAreas];
-        [self registerForDraggedTypes:@[NSPasteboardTypeURL]];
+        updateRegisteredDraggedTypes(self);
     }
 
     return self;
@@ -665,9 +748,40 @@ static const NSRange kEmptyRange = { NSNotFound, 0 };
 
 - (NSDragOperation)draggingEntered:(id <NSDraggingInfo>)sender
 {
+    if (draggingMatchesSession(sender))
+    {
+        const NSRect contentRect = [window->ns.view frame];
+        const NSPoint pos = [sender draggingLocation];
+        _glfwInputDragDrop(window, GLFW_DRAGDROP_ENTER,
+                           pos.x, contentRect.size.height - pos.y,
+                           _glfw.ns.dragDropSession.type);
+        return NSDragOperationGeneric;
+    }
+
     // HACK: We don't know what to say here because we don't know what the
     //       application wants to do with the paths
     return NSDragOperationGeneric;
+}
+
+- (NSDragOperation)draggingUpdated:(id <NSDraggingInfo>)sender
+{
+    if (draggingMatchesSession(sender))
+    {
+        const NSRect contentRect = [window->ns.view frame];
+        const NSPoint pos = [sender draggingLocation];
+        _glfwInputDragDrop(window, GLFW_DRAGDROP_MOTION,
+                           pos.x, contentRect.size.height - pos.y,
+                           _glfw.ns.dragDropSession.type);
+    }
+
+    return NSDragOperationGeneric;
+}
+
+- (void)draggingExited:(id <NSDraggingInfo>)sender
+{
+    if (draggingMatchesSession(sender))
+        _glfwInputDragDrop(window, GLFW_DRAGDROP_LEAVE, 0.0, 0.0,
+                           _glfw.ns.dragDropSession.type);
 }
 
 - (BOOL)performDragOperation:(id <NSDraggingInfo>)sender
@@ -675,6 +789,18 @@ static const NSRange kEmptyRange = { NSNotFound, 0 };
     const NSRect contentRect = [window->ns.view frame];
     // NOTE: The returned location uses base 0,1 not 0,0
     const NSPoint pos = [sender draggingLocation];
+
+    if (draggingMatchesSession(sender))
+    {
+        // Recorded before the callback: the source side's endedAtPoint (which reads
+        // this as `consumed`) fires right after this method returns.
+        _glfw.ns.dragDropSession.dropReceived = GLFW_TRUE;
+        _glfwInputDragDrop(window, GLFW_DRAGDROP_DROP,
+                           pos.x, contentRect.size.height - pos.y,
+                           _glfw.ns.dragDropSession.type);
+        return YES;
+    }
+
     _glfwInputCursorPos(window, pos.x, contentRect.size.height - pos.y);
 
     NSPasteboard* pasteboard = [sender draggingPasteboard];
@@ -697,6 +823,28 @@ static const NSRange kEmptyRange = { NSNotFound, 0 };
     }
 
     return YES;
+}
+
+- (NSDragOperation)draggingSession:(NSDraggingSession *)session
+    sourceOperationMaskForDraggingContext:(NSDraggingContext)context
+{
+    // Within this application only: the session exists purely to route this
+    // application's own drag across its own windows (glfwStartDragDrop) -- a
+    // foreign application has no use for the type and must not accept it.
+    if (context == NSDraggingContextWithinApplication)
+        return NSDragOperationGeneric;
+
+    return NSDragOperationNone;
+}
+
+- (void)draggingSession:(NSDraggingSession *)session
+           endedAtPoint:(NSPoint)screenPoint
+              operation:(NSDragOperation)operation
+{
+    // `operation` is deliberately unused: like wl_window.c's own dropReceived
+    // reasoning, only a real GLFW_DRAGDROP_DROP on one of this application's
+    // windows counts as consumed, not whatever the OS reports here.
+    endDragDropSessionCocoa();
 }
 
 - (BOOL)hasMarkedText
@@ -1043,6 +1191,11 @@ void _glfwDestroyWindowCocoa(_GLFWwindow* window)
     if (_glfw.ns.disabledCursorWindow == window)
         _glfw.ns.disabledCursorWindow = NULL;
 
+    // A live drag session must never end into a freed source window; the session
+    // still tears down normally, it just has no one left to notify.
+    if (_glfw.ns.dragDropSession.window == window)
+        _glfw.ns.dragDropSession.window = NULL;
+
     [window->ns.object orderOut:nil];
 
     if (window->monitor)
@@ -1308,6 +1461,134 @@ void _glfwDragWindowCocoa(_GLFWwindow* window)
         _glfwInputMouseClick(window, GLFW_MOUSE_BUTTON_LEFT, GLFW_RELEASE,
                              translateFlags([event modifierFlags]));
     }
+    } // autoreleasepool
+}
+
+GLFWbool _glfwStartDragDropCocoa(_GLFWwindow* window, const char* type)
+{
+    @autoreleasepool {
+
+    // One session at a time, same as the Wayland backend.
+    if (_glfw.ns.dragDropSession.type)
+        return GLFW_FALSE;
+
+    // beginDraggingSessionWithItems needs the mouse event that started the
+    // gesture; the closest available stands in, same as _glfwDragWindowCocoa.
+    // This is also the "a pointer button must be held" gate the API requires.
+    NSEvent* event = [NSApp currentEvent];
+    if (!event || ([event type] != NSEventTypeLeftMouseDown &&
+                   [event type] != NSEventTypeLeftMouseDragged))
+    {
+        return GLFW_FALSE;
+    }
+
+    _glfw.ns.dragDropSession.window = window;
+    _glfw.ns.dragDropSession.type = _glfw_strdup(type);
+    _glfw.ns.dragDropSession.dropReceived = GLFW_FALSE;
+
+    // Every window accepts the session's type for its duration, including ones
+    // created mid-session (see updateRegisteredDraggedTypes). Registered before
+    // beginDraggingSession so a destination is never offered a type it hasn't
+    // registered yet.
+    for (_GLFWwindow* w = _glfw.windowListHead;  w;  w = w->next)
+        updateRegisteredDraggedTypes(w->ns.view);
+
+    NSPasteboardItem* item = [[[NSPasteboardItem alloc] init] autorelease];
+    [item setString:@"" forType:sessionPasteboardType()];
+
+    // A contentless 1x1 frame draws nothing: glfwSetDragDropIcon attaches the
+    // real image once the application has rendered one, which can only happen
+    // after this call returns -- same reasoning as the Wayland backend's
+    // initially-empty icon surface.
+    NSDraggingItem* dragItem =
+        [[[NSDraggingItem alloc] initWithPasteboardWriter:item] autorelease];
+    const NSPoint location =
+        [window->ns.view convertPoint:[event locationInWindow] fromView:nil];
+    [dragItem setDraggingFrame:NSMakeRect(location.x, location.y, 1.0, 1.0)
+                      contents:nil];
+
+    NSDraggingSession* session =
+        [window->ns.view beginDraggingSessionWithItems:@[dragItem]
+                                                 event:event
+                                                source:(GLFWContentView*)window->ns.view];
+    if (!session)
+    {
+        _glfw_free(_glfw.ns.dragDropSession.type);
+        _glfw.ns.dragDropSession.type = NULL;
+        _glfw.ns.dragDropSession.window = NULL;
+        return GLFW_FALSE;
+    }
+
+    // No snap-back animation on an unconsumed drop: the application treats one
+    // as a completed gesture in its own right (a tab dropped on the desktop
+    // opens a new window there, e.g.), not a failure to animate away from.
+    session.animatesToStartingPositionsOnCancelOrFail = NO;
+
+    // Retained so glfwSetDragDropIcon can reach the live session's items later.
+    _glfw.ns.dragDropSession.session = [session retain];
+
+    return GLFW_TRUE;
+
+    } // autoreleasepool
+}
+
+GLFWbool _glfwSetDragDropIconCocoa(_GLFWwindow* window, const GLFWimage* image, int xhot, int yhot)
+{
+    @autoreleasepool {
+
+    if (_glfw.ns.dragDropSession.window != window || !_glfw.ns.dragDropSession.session)
+        return GLFW_FALSE;
+
+    NSBitmapImageRep* rep = [[NSBitmapImageRep alloc]
+        initWithBitmapDataPlanes:NULL
+                      pixelsWide:image->width
+                      pixelsHigh:image->height
+                   bitsPerSample:8
+                 samplesPerPixel:4
+                        hasAlpha:YES
+                        isPlanar:NO
+                  colorSpaceName:NSCalibratedRGBColorSpace
+                    bitmapFormat:NSBitmapFormatAlphaNonpremultiplied
+                     bytesPerRow:image->width * 4
+                    bitsPerPixel:32];
+    if (rep == nil)
+        return GLFW_FALSE;
+
+    memcpy([rep bitmapData], image->pixels, image->width * image->height * 4);
+
+    // `image` is sized in physical pixels; the NSImage's point size is what
+    // makes it draw at the intended logical size on a Retina display -- the
+    // same physical-to-logical split the Wayland backend expresses through its
+    // viewport destination size.
+    const CGFloat scale = [window->ns.object backingScaleFactor];
+    const CGFloat width = image->width / scale;
+    const CGFloat height = image->height / scale;
+
+    NSImage* icon = [[NSImage alloc] initWithSize:NSMakeSize(width, height)];
+    [icon addRepresentation:rep];
+    [rep release];
+
+    // Screen coordinates (forView:nil), bottom-up: place the image so the
+    // hotspot -- (xhot, yhot) in image pixels from its top-left -- sits at the
+    // cursor, and it keeps tracking the cursor from there.
+    const NSPoint mouse = [NSEvent mouseLocation];
+    const NSRect frame = NSMakeRect(mouse.x - xhot / scale,
+                                    mouse.y + yhot / scale - height,
+                                    width, height);
+
+    NSDraggingSession* session = (NSDraggingSession*)_glfw.ns.dragDropSession.session;
+    [session enumerateDraggingItemsWithOptions:0
+                                       forView:nil
+                                       classes:@[[NSPasteboardItem class]]
+                                 searchOptions:@{}
+                                    usingBlock:^(NSDraggingItem* item, NSInteger index, BOOL* stop)
+    {
+        [item setDraggingFrame:frame contents:icon];
+    }];
+
+    [icon release];
+    return GLFW_TRUE;
+
     } // autoreleasepool
 }
 
