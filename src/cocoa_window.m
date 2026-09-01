@@ -1281,6 +1281,12 @@ void _glfwDragWindowCocoa(_GLFWwindow* window)
                   [event type] == NSEventTypeLeftMouseDragged))
     {
         [window->ns.object performWindowDragWithEvent:event];
+
+        // The window server owns the drag session from here: the app stops
+        // receiving mouseDragged/mouseUp for it, so without this the button
+        // stays "down" in client state for the whole drag.
+        _glfwInputMouseClick(window, GLFW_MOUSE_BUTTON_LEFT, GLFW_RELEASE,
+                             translateFlags([event modifierFlags]));
     }
     } // autoreleasepool
 }
