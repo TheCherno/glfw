@@ -536,6 +536,10 @@ struct _GLFWwindow
     // Window settings and state
     GLFWbool            resizable;
     GLFWbool            decorated;
+    // Per-window copy of the GLFW_TITLEBAR hint. The custom-frame message handlers run for the
+    // window's whole life, long after the global hint has been reset by the next window's
+    // glfwDefaultWindowHints, so they have to read this rather than _glfw.hints.window.titlebar.
+    GLFWbool            titlebar;
     GLFWbool            autoIconify;
     GLFWbool            floating;
     GLFWbool            focusOnShow;

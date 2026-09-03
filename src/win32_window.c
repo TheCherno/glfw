@@ -74,6 +74,38 @@ static DWORD getWindowExStyle(const _GLFWwindow* window)
     return style;
 }
 
+// Expands a client rect to the full window rect.
+//
+// AdjustWindowRectEx describes the standard frame, so it adds a caption. A titlebar-less window
+// never gets one: the custom WM_NCCALCSIZE below insets only the side and bottom resize borders
+// and leaves the top alone. Converting such a window with the standard frame overshoots by the
+// caption height, so the client it actually ends up with is taller than the size that was asked
+// for -- content sized to the request then falls short of the bottom edge.
+//
+// Pass dpi 0 to use the non-per-monitor metrics (e.g. before the window exists).
+static void getFullWindowRect(RECT* rect, DWORD style, DWORD exStyle,
+                              GLFWbool titlebar, UINT dpi)
+{
+    if (!titlebar && (style & WS_THICKFRAME))
+    {
+        const int borderX = dpi ? GetSystemMetricsForDpi(SM_CXFRAME, dpi)
+                                : GetSystemMetrics(SM_CXFRAME);
+        const int borderY = dpi ? GetSystemMetricsForDpi(SM_CYFRAME, dpi)
+                                : GetSystemMetrics(SM_CYFRAME);
+
+        // Mirrors the WM_NCCALCSIZE insets exactly, top included (it isn't inset there either).
+        rect->left   -= borderX;
+        rect->right  += borderX;
+        rect->bottom += borderY;
+        return;
+    }
+
+    if (dpi)
+        AdjustWindowRectExForDpi(rect, style, FALSE, exStyle, dpi);
+    else
+        AdjustWindowRectEx(rect, style, FALSE, exStyle);
+}
+
 // Returns the image whose area most closely matches the desired one
 //
 static const GLFWimage* chooseImage(int count, const GLFWimage* images,
@@ -224,6 +256,12 @@ static void applyAspectRatio(_GLFWwindow* window, int edge, RECT* area)
 //
 static void updateCursorImage(_GLFWwindow* window)
 {
+    // While a native drag is in flight, DoDragDrop owns the cursor (it shows the drag
+    // cursors). Frames pumped during its modal loop would otherwise call SetCursor here
+    // every frame and fight it, making the cursor flicker between shapes.
+    if (_glfw.win32.dragDropSession.active)
+        return;
+
     if (window->cursorMode == GLFW_CURSOR_NORMAL ||
         window->cursorMode == GLFW_CURSOR_CAPTURED)
     {
@@ -558,7 +596,11 @@ static LRESULT CALLBACK windowProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM l
 
             case WM_CREATE:
             {
-                if (_glfw.hints.window.titlebar)
+                // Arrives before the GLFW prop is set, so take the config off the create
+                // struct the same way WM_NCCREATE above does rather than the global hint.
+                const CREATESTRUCTW* cs = (const CREATESTRUCTW*) lParam;
+                const _GLFWwndconfig* wndconfig = cs ? cs->lpCreateParams : NULL;
+                if (!wndconfig || wndconfig->titlebar)
                     break;
 
                 if (hasThickFrame)
@@ -889,6 +931,11 @@ static LRESULT CALLBACK windowProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM l
             if (i > GLFW_MOUSE_BUTTON_LAST)
                 ReleaseCapture();
 
+            // The button came up before any mouse move entered the deferred DoDragDrop, so the
+            // armed session would otherwise leak and block the next drag. Discard it.
+            if (uMsg == WM_LBUTTONUP)
+                _glfwCancelPendingDragDropWin32(window);
+
             if (uMsg == WM_XBUTTONDOWN || uMsg == WM_XBUTTONUP)
                 return TRUE;
 
@@ -932,6 +979,11 @@ static LRESULT CALLBACK windowProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM l
 
             window->win32.lastCursorPosX = x;
             window->win32.lastCursorPosY = y;
+
+            // A native drag armed by glfwStartDragDrop is entered here, on the first
+            // mouse message after arming -- between frames, so DoDragDrop's modal loop
+            // never re-enters the render frame that started the drag.
+            _glfwEnterPendingDragDropWin32(window);
 
             return 0;
         }
@@ -1061,7 +1113,7 @@ static LRESULT CALLBACK windowProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM l
 
         case WM_NCCALCSIZE:
         {
-            if (_glfw.hints.window.titlebar || !hasThickFrame || !wParam)
+            if (window->titlebar || !hasThickFrame || !wParam)
                 break;
 
             // For custom frames
@@ -1360,7 +1412,7 @@ static LRESULT CALLBACK windowProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM l
 
         case WM_ACTIVATE:
         {
-            if (_glfw.hints.window.titlebar)
+            if (window->titlebar)
                 break;
 
             RECT title_bar_rect = { 0 };
@@ -1370,7 +1422,7 @@ static LRESULT CALLBACK windowProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM l
 
         case WM_NCHITTEST:
         {
-            if (_glfw.hints.window.titlebar || !hasThickFrame)
+            if (window->titlebar || !hasThickFrame)
                 break;
 
             //
@@ -1520,7 +1572,7 @@ static int createNativeWindow(_GLFWwindow* window,
         if (wndconfig->maximized)
             style |= WS_MAXIMIZE;
 
-        AdjustWindowRectEx(&rect, style, FALSE, exStyle);
+        getFullWindowRect(&rect, style, exStyle, wndconfig->titlebar, 0);
 
         if (wndconfig->xpos == GLFW_ANY_POSITION && wndconfig->ypos == GLFW_ANY_POSITION)
         {
@@ -1595,13 +1647,9 @@ static int createNativeWindow(_GLFWwindow* window,
             }
         }
 
-        if (_glfwIsWindows10Version1607OrGreaterWin32())
-        {
-            AdjustWindowRectExForDpi(&rect, style, FALSE, exStyle,
-                                     GetDpiForWindow(window->win32.handle));
-        }
-        else
-            AdjustWindowRectEx(&rect, style, FALSE, exStyle);
+        getFullWindowRect(&rect, style, exStyle, wndconfig->titlebar,
+                          _glfwIsWindows10Version1607OrGreaterWin32()
+                              ? GetDpiForWindow(window->win32.handle) : 0);
 
         GetWindowPlacement(window->win32.handle, &wp);
         OffsetRect(&rect,
@@ -1631,10 +1679,29 @@ static int createNativeWindow(_GLFWwindow* window,
 
     DragAcceptFiles(window->win32.handle, TRUE);
 
+    // OLE drop destination for native drag-and-drop (glfwStartDragDrop). Supersedes the
+    // legacy WM_DROPFILES path above while active; its IDropTarget also forwards external
+    // file drops so DragAcceptFiles keeps working as a fallback if OLE isn't available.
+    _glfwRegisterDropTargetWin32(window);
+
     if (fbconfig->transparent)
     {
         updateFramebufferTransparency(window);
         window->win32.transparent = GLFW_TRUE;
+    }
+
+    // The custom-frame WM_NCCALCSIZE handler is only reachable once the GLFW prop is set, which
+    // happens after CreateWindowExW returns. So the frame change WM_CREATE asks for is still
+    // serviced by DefWindowProc, and the window is born with a standard title bar that only goes
+    // away on the first resize. Ask again now that the handler can actually see the window.
+    //
+    // The window rect above already accounts for the custom frame, so this only has to make the
+    // handler run; it must not change the size.
+    if (!wndconfig->titlebar)
+    {
+        SetWindowPos(window->win32.handle, NULL, 0, 0, 0, 0,
+                     SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE |
+                     SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOOWNERZORDER);
     }
 
     _glfwGetWindowSizeWin32(window, &window->win32.width, &window->win32.height);
@@ -1706,6 +1773,8 @@ GLFWbool _glfwCreateWindowWin32(_GLFWwindow* window,
 
 void _glfwDestroyWindowWin32(_GLFWwindow* window)
 {
+    _glfwRevokeDropTargetWin32(window);
+
     if (window->monitor)
         releaseMonitor(window);
 
@@ -1835,18 +1904,11 @@ void _glfwSetWindowSizeWin32(_GLFWwindow* window, int width, int height)
     else
     {
         RECT rect = { 0, 0, width, height };
+        const UINT dpi = _glfwIsWindows10Version1607OrGreaterWin32()
+                       ? GetDpiForWindow(window->win32.handle) : 0;
 
-        if (_glfwIsWindows10Version1607OrGreaterWin32())
-        {
-            AdjustWindowRectExForDpi(&rect, getWindowStyle(window),
-                                     FALSE, getWindowExStyle(window),
-                                     GetDpiForWindow(window->win32.handle));
-        }
-        else
-        {
-            AdjustWindowRectEx(&rect, getWindowStyle(window),
-                               FALSE, getWindowExStyle(window));
-        }
+        getFullWindowRect(&rect, getWindowStyle(window), getWindowExStyle(window),
+                          window->titlebar, dpi);
 
         SetWindowPos(window->win32.handle, HWND_TOP,
                      0, 0, rect.right - rect.left, rect.bottom - rect.top,
@@ -1903,16 +1965,12 @@ void _glfwGetWindowFrameSizeWin32(_GLFWwindow* window,
     _glfwGetWindowSizeWin32(window, &width, &height);
     SetRect(&rect, 0, 0, width, height);
 
-    if (_glfwIsWindows10Version1607OrGreaterWin32())
     {
-        AdjustWindowRectExForDpi(&rect, getWindowStyle(window),
-                                 FALSE, getWindowExStyle(window),
-                                 GetDpiForWindow(window->win32.handle));
-    }
-    else
-    {
-        AdjustWindowRectEx(&rect, getWindowStyle(window),
-                           FALSE, getWindowExStyle(window));
+        const UINT dpi = _glfwIsWindows10Version1607OrGreaterWin32()
+                       ? GetDpiForWindow(window->win32.handle) : 0;
+
+        getFullWindowRect(&rect, getWindowStyle(window), getWindowExStyle(window),
+                          window->titlebar, dpi);
     }
 
     if (left)

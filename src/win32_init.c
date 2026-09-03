@@ -626,6 +626,8 @@ GLFWbool _glfwConnectWin32(int platformID, _GLFWplatform* platform)
         .requestWindowAttention = _glfwRequestWindowAttentionWin32,
         .focusWindow = _glfwFocusWindowWin32,
         .dragWindow = _glfwDragWindowWin32,
+        .startDragDrop = _glfwStartDragDropWin32,
+        .setDragDropIcon = _glfwSetDragDropIconWin32,
         .setWindowMonitor = _glfwSetWindowMonitorWin32,
         .windowFocused = _glfwWindowFocusedWin32,
         .windowIconified = _glfwWindowIconifiedWin32,
@@ -674,12 +676,19 @@ int _glfwInitWin32(void)
     if (!createHelperWindow())
         return GLFW_FALSE;
 
+    // OLE apartment for native drag-and-drop (RegisterDragDrop/DoDragDrop). Not fatal if it
+    // fails -- the app just falls back to position-based hit-testing, as on an unimplemented
+    // platform (see glfwStartDragDrop).
+    _glfwInitDragDropWin32();
+
     _glfwPollMonitorsWin32();
     return GLFW_TRUE;
 }
 
 void _glfwTerminateWin32(void)
 {
+    _glfwTerminateDragDropWin32();
+
     if (_glfw.win32.blankCursor)
         DestroyIcon((HICON) _glfw.win32.blankCursor);
 
