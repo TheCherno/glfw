@@ -56,6 +56,10 @@
 
 #define _GLFW_XDND_VERSION 5
 
+// How far the drag icon sits from the pointer, down and to the right (see
+// _glfwSetDragDropIconX11 for why it must not sit under it)
+#define _GLFW_DRAGDROP_ICON_OFFSET 16
+
 // Wait for event data to arrive on the X11 display socket
 // This avoids blocking other threads via the per-display Xlib lock that also
 // covers GLX functions
@@ -463,8 +467,18 @@ static int resizeBorderDirection(_GLFWwindow* window, int x, int y)
     if (window->decorated || window->monitor || !_glfw.x11.NET_WM_MOVERESIZE)
         return -1;
 
+    // Mid-drag there is no edge hover to indicate, and the session's grab
+    // feeds this window positions outside its bounds anyway
+    if (_glfw.x11.dragDropSession.window)
+        return -1;
+
     int w, h;
     _glfwGetWindowSizeX11(window, &w, &h);
+
+    // Positions outside the window (possible whenever a grab is routing all
+    // motion here) are not edge hovers either
+    if (x < 0 || y < 0 || x >= w || y >= h)
+        return -1;
 
     const int border = 8; // px — resize hit zone
     const GLFWbool onLeft   = (x < border);
@@ -1021,7 +1035,28 @@ static void handleSelectionRequest(XEvent* event)
     const XSelectionRequestEvent* request = &event->xselectionrequest;
 
     XEvent reply = { SelectionNotify };
-    reply.xselection.property = writeTargetToProperty(request);
+
+    if (request->selection == _glfw.x11.XdndSelection)
+    {
+        // A drag-and-drop target is converting the session's payload; there is
+        // none (see _glfwStartDragDropX11), so serve zero-length data of the
+        // requested type rather than routing into the clipboard strings.
+        reply.xselection.property = request->property;
+
+        if (request->property != None)
+        {
+            XChangeProperty(_glfw.x11.display,
+                            request->requestor,
+                            request->property,
+                            request->target,
+                            8,
+                            PropModeReplace,
+                            NULL,
+                            0);
+        }
+    }
+    else
+        reply.xselection.property = writeTargetToProperty(request);
     reply.xselection.display = request->display;
     reply.xselection.requestor = request->requestor;
     reply.xselection.selection = request->selection;
@@ -1029,6 +1064,204 @@ static void handleSelectionRequest(XEvent* event)
     reply.xselection.time = request->time;
 
     XSendEvent(_glfw.x11.display, request->requestor, False, 0, &reply);
+}
+
+// Ends the drag-and-drop session started by _glfwStartDragDropX11, reporting
+// whether the drop landed on one of this application's own windows and
+// synthesizing the release the session swallowed in ButtonRelease. Safe to
+// call when no session is active. Mirrors endDragDropSession in wl_window.c.
+//
+static void endDragDropSession(void)
+{
+    _GLFWwindow* window = _glfw.x11.dragDropSession.window;
+
+    if (!window)
+        return;
+
+    const GLFWbool consumed = _glfw.x11.dragDropSession.dropReceived;
+
+    // A cancelled session can still be showing ENTER state on one of our own
+    // windows; the XdndLeave sent to it round-trips through the server and
+    // would arrive after the session state its handler needs is gone below,
+    // so deliver the leave directly.
+    if (_glfw.x11.dragDropSession.enteredTarget)
+    {
+        _glfwInputDragDrop(_glfw.x11.dragDropSession.enteredTarget,
+                           GLFW_DRAGDROP_LEAVE, 0.0, 0.0,
+                           _glfw.x11.dragDropSession.type);
+    }
+
+    if (_glfw.x11.dragDropSession.iconWindow)
+        XDestroyWindow(_glfw.x11.display, _glfw.x11.dragDropSession.iconWindow);
+
+    if (_glfw.x11.dragDropSession.iconColormap)
+        XFreeColormap(_glfw.x11.display, _glfw.x11.dragDropSession.iconColormap);
+
+    if (XGetSelectionOwner(_glfw.x11.display, _glfw.x11.XdndSelection) ==
+        window->x11.handle)
+    {
+        XSetSelectionOwner(_glfw.x11.display, _glfw.x11.XdndSelection, None,
+                           CurrentTime);
+    }
+
+    XFlush(_glfw.x11.display);
+
+    _glfw_free(_glfw.x11.dragDropSession.type);
+    memset(&_glfw.x11.dragDropSession, 0, sizeof(_glfw.x11.dragDropSession));
+
+    // The session swallowed the real release; synthesize one so the caller's
+    // drag resolves after it has learned the outcome, matching the Wayland
+    // backend's ordering.
+    _glfwInputDragEnd(window, consumed);
+    _glfwInputMouseClick(window, GLFW_MOUSE_BUTTON_LEFT, GLFW_RELEASE, 0);
+}
+
+// Sends one XDND client message from the session's source window to `target`;
+// data.l[0] always carries the source window as the XDND protocol requires
+//
+static void sendDragDropMessage(Window target, Atom message,
+                                long l1, long l2, long l3, long l4)
+{
+    XEvent event = { ClientMessage };
+    event.xclient.window = target;
+    event.xclient.message_type = message;
+    event.xclient.format = 32;
+    event.xclient.data.l[0] = (long) _glfw.x11.dragDropSession.window->x11.handle;
+    event.xclient.data.l[1] = l1;
+    event.xclient.data.l[2] = l2;
+    event.xclient.data.l[3] = l3;
+    event.xclient.data.l[4] = l4;
+    XSendEvent(_glfw.x11.display, target, False, NoEventMask, &event);
+}
+
+static void sendDragDropPosition(int rootX, int rootY, Time time)
+{
+    _glfw.x11.dragDropSession.awaitingStatus = GLFW_TRUE;
+    sendDragDropMessage(_glfw.x11.dragDropSession.target,
+                        _glfw.x11.XdndPosition,
+                        0,
+                        (long) (rootX & 0xffff) << 16 | (rootY & 0xffff),
+                        _glfw.x11.dragDropSession.targetVersion >= 1 ?
+                            (long) time : 0,
+                        _glfw.x11.dragDropSession.targetVersion >= 2 ?
+                            (long) _glfw.x11.XdndActionCopy : 0);
+}
+
+static void sendDragDropDrop(void)
+{
+    _glfw.x11.dragDropSession.dropSent = GLFW_TRUE;
+    sendDragDropMessage(_glfw.x11.dragDropSession.target,
+                        _glfw.x11.XdndDrop,
+                        0,
+                        _glfw.x11.dragDropSession.targetVersion >= 1 ?
+                            (long) _glfw.x11.dragDropSession.releaseTime : 0,
+                        0, 0);
+    XFlush(_glfw.x11.display);
+}
+
+// The XdndAware top-level under the given root position, found by descending
+// the window tree at that point; WM frame windows never carry the property,
+// so this lands on the client window itself. Returns None when nothing under
+// the pointer announces XDND. `version` receives the target's advertised
+// protocol version.
+//
+static Window findDragDropTarget(int rootX, int rootY, int* version)
+{
+    Window target = _glfw.x11.root;
+
+    // Foreign windows can be destroyed mid-walk
+    _glfwGrabErrorHandlerX11();
+
+    for (;;)
+    {
+        Atom* value = NULL;
+
+        if (_glfwGetWindowPropertyX11(target, _glfw.x11.XdndAware, XA_ATOM,
+                                      (unsigned char**) &value))
+        {
+            *version = (int) *value;
+            XFree(value);
+            break;
+        }
+
+        if (value)
+            XFree(value);
+
+        Window child = None;
+        int childX, childY;
+        XTranslateCoordinates(_glfw.x11.display, _glfw.x11.root, target,
+                              rootX, rootY, &childX, &childY, &child);
+
+        if (child == None)
+        {
+            target = None;
+            break;
+        }
+
+        target = child;
+    }
+
+    _glfwReleaseErrorHandlerX11();
+    return target;
+}
+
+// Drives the session from pointer motion on the source window: keeps the drag
+// icon beside the pointer, tracks which XdndAware window is underneath, and
+// keeps XdndEnter/Leave/Position traffic flowing to it -- throttled to one
+// XdndPosition in flight at a time, as the XDND protocol requires
+//
+static void updateDragDropSession(int rootX, int rootY, Time time)
+{
+    if (_glfw.x11.dragDropSession.iconWindow)
+    {
+        XMoveWindow(_glfw.x11.display, _glfw.x11.dragDropSession.iconWindow,
+                    rootX + _GLFW_DRAGDROP_ICON_OFFSET,
+                    rootY + _GLFW_DRAGDROP_ICON_OFFSET);
+    }
+
+    int version = 0;
+    const Window target = findDragDropTarget(rootX, rootY, &version);
+
+    if (target != _glfw.x11.dragDropSession.target)
+    {
+        if (_glfw.x11.dragDropSession.target)
+        {
+            sendDragDropMessage(_glfw.x11.dragDropSession.target,
+                                _glfw.x11.XdndLeave, 0, 0, 0, 0);
+        }
+
+        _glfw.x11.dragDropSession.target = target;
+        _glfw.x11.dragDropSession.targetAccepts = GLFW_FALSE;
+        _glfw.x11.dragDropSession.awaitingStatus = GLFW_FALSE;
+        _glfw.x11.dragDropSession.positionPending = GLFW_FALSE;
+
+        if (target)
+        {
+            // Speak the lower of the two protocol versions, per the XDND spec
+            _glfw.x11.dragDropSession.targetVersion =
+                version < _GLFW_XDND_VERSION ? version : _GLFW_XDND_VERSION;
+
+            sendDragDropMessage(target, _glfw.x11.XdndEnter,
+                                (long) _glfw.x11.dragDropSession.targetVersion << 24,
+                                (long) _glfw.x11.dragDropSession.typeAtom, 0, 0);
+        }
+    }
+
+    if (_glfw.x11.dragDropSession.target)
+    {
+        if (_glfw.x11.dragDropSession.awaitingStatus)
+        {
+            // Only the newest position matters once XdndStatus arrives
+            _glfw.x11.dragDropSession.positionPending = GLFW_TRUE;
+            _glfw.x11.dragDropSession.pendingRootX = rootX;
+            _glfw.x11.dragDropSession.pendingRootY = rootY;
+            _glfw.x11.dragDropSession.pendingTime = time;
+        }
+        else
+            sendDragDropPosition(rootX, rootY, time);
+    }
+
+    XFlush(_glfw.x11.display);
 }
 
 static const char* getSelectionString(Atom selection)
@@ -1556,6 +1789,44 @@ static void processEvent(XEvent *event)
         {
             const int mods = translateState(event->xbutton.state);
 
+            if (event->xbutton.button == Button1 &&
+                window == _glfw.x11.dragDropSession.window)
+            {
+                // The release belongs to the drag-and-drop session: it either
+                // becomes the drop or cancels the session. Swallowed here and
+                // synthesized by endDragDropSession so the application learns
+                // the outcome before the drag resolves, as on Wayland.
+                _glfw.x11.dragDropSession.releaseTime = event->xbutton.time;
+                _glfw.x11.dragDropSession.endDeadline =
+                    _glfwPlatformGetTimerValue() +
+                    2 * _glfwPlatformGetTimerFrequency();
+
+                if (_glfw.x11.dragDropSession.target &&
+                    _glfw.x11.dragDropSession.awaitingStatus)
+                {
+                    // The target's verdict on the last XdndPosition is still in
+                    // flight; the XdndStatus handler decides drop or cancel.
+                    _glfw.x11.dragDropSession.releasePending = GLFW_TRUE;
+                }
+                else if (_glfw.x11.dragDropSession.target &&
+                         _glfw.x11.dragDropSession.targetAccepts)
+                {
+                    sendDragDropDrop();
+                }
+                else
+                {
+                    if (_glfw.x11.dragDropSession.target)
+                    {
+                        sendDragDropMessage(_glfw.x11.dragDropSession.target,
+                                            _glfw.x11.XdndLeave, 0, 0, 0, 0);
+                    }
+
+                    endDragDropSession();
+                }
+
+                return;
+            }
+
             if (event->xbutton.button == Button1)
             {
                 _glfwInputMouseClick(window,
@@ -1641,6 +1912,20 @@ static void processEvent(XEvent *event)
                 }
                 else
                     _glfwInputCursorPos(window, x, y);
+            }
+
+            // While this window's drag-and-drop session is active, its implicit
+            // press grab routes all motion here regardless of what's under the
+            // pointer; the root coordinates drive target discovery and
+            // XdndPosition traffic (see _glfwStartDragDropX11).
+            if (window == _glfw.x11.dragDropSession.window)
+            {
+                window->x11.lastCursorPosX = x;
+                window->x11.lastCursorPosY = y;
+                updateDragDropSession(event->xmotion.x_root,
+                                      event->xmotion.y_root,
+                                      event->xmotion.time);
+                return;
             }
 
             // Crossing into, out of, or between the resize band's edges changes which
@@ -1787,9 +2072,11 @@ static void processEvent(XEvent *event)
 
                 for (unsigned int i = 0;  i < count;  i++)
                 {
-                    if (formats[i] == _glfw.x11.text_uri_list)
+                    if (formats[i] == _glfw.x11.text_uri_list ||
+                        (_glfw.x11.dragDropSession.window &&
+                         formats[i] == _glfw.x11.dragDropSession.typeAtom))
                     {
-                        _glfw.x11.xdnd.format = _glfw.x11.text_uri_list;
+                        _glfw.x11.xdnd.format = formats[i];
                         break;
                     }
                 }
@@ -1805,7 +2092,39 @@ static void processEvent(XEvent *event)
                 if (_glfw.x11.xdnd.version > _GLFW_XDND_VERSION)
                     return;
 
-                if (_glfw.x11.xdnd.format)
+                if (_glfw.x11.dragDropSession.window &&
+                    _glfw.x11.xdnd.format == _glfw.x11.dragDropSession.typeAtom)
+                {
+                    // A session drop transfers no payload (see
+                    // _glfwStartDragDropX11), so skip the selection round-trip
+                    // and finish immediately; the XdndFinished reply below is
+                    // what ends the session back on the source side.
+                    if (_glfw.x11.dragDropSession.enteredTarget == window)
+                    {
+                        _glfw.x11.dragDropSession.enteredTarget = NULL;
+                        _glfw.x11.dragDropSession.dropReceived = GLFW_TRUE;
+                        _glfwInputDragDrop(window, GLFW_DRAGDROP_DROP,
+                                           _glfw.x11.dragDropSession.enteredX,
+                                           _glfw.x11.dragDropSession.enteredY,
+                                           _glfw.x11.dragDropSession.type);
+                    }
+
+                    if (_glfw.x11.xdnd.version >= 2)
+                    {
+                        XEvent reply = { ClientMessage };
+                        reply.xclient.window = _glfw.x11.xdnd.source;
+                        reply.xclient.message_type = _glfw.x11.XdndFinished;
+                        reply.xclient.format = 32;
+                        reply.xclient.data.l[0] = window->x11.handle;
+                        reply.xclient.data.l[1] = 1; // The drag was accepted
+                        reply.xclient.data.l[2] = _glfw.x11.XdndActionCopy;
+
+                        XSendEvent(_glfw.x11.display, _glfw.x11.xdnd.source,
+                                   False, NoEventMask, &reply);
+                        XFlush(_glfw.x11.display);
+                    }
+                }
+                else if (_glfw.x11.xdnd.format)
                 {
                     if (_glfw.x11.xdnd.version >= 1)
                         time = event->xclient.data.l[2];
@@ -1851,7 +2170,31 @@ static void processEvent(XEvent *event)
                                       &xpos, &ypos,
                                       &dummy);
 
-                _glfwInputCursorPos(window, xpos, ypos);
+                if (_glfw.x11.dragDropSession.window &&
+                    _glfw.x11.xdnd.format == _glfw.x11.dragDropSession.typeAtom)
+                {
+                    // Session routing: deliver enter/motion phases instead of
+                    // cursor movement, mirroring the Wayland data-device
+                    // routing (see _glfwStartDragDropX11)
+                    if (_glfw.x11.dragDropSession.enteredTarget != window)
+                    {
+                        _glfw.x11.dragDropSession.enteredTarget = window;
+                        _glfwInputDragDrop(window, GLFW_DRAGDROP_ENTER,
+                                           xpos, ypos,
+                                           _glfw.x11.dragDropSession.type);
+                    }
+                    else
+                    {
+                        _glfwInputDragDrop(window, GLFW_DRAGDROP_MOTION,
+                                           xpos, ypos,
+                                           _glfw.x11.dragDropSession.type);
+                    }
+
+                    _glfw.x11.dragDropSession.enteredX = xpos;
+                    _glfw.x11.dragDropSession.enteredY = ypos;
+                }
+                else
+                    _glfwInputCursorPos(window, xpos, ypos);
 
                 XEvent reply = { ClientMessage };
                 reply.xclient.window = _glfw.x11.xdnd.source;
@@ -1872,6 +2215,67 @@ static void processEvent(XEvent *event)
                 XSendEvent(_glfw.x11.display, _glfw.x11.xdnd.source,
                            False, NoEventMask, &reply);
                 XFlush(_glfw.x11.display);
+            }
+            else if (event->xclient.message_type == _glfw.x11.XdndLeave)
+            {
+                // The drag operation left the window without dropping. Only
+                // the session routing tracks this; the file-drop path never
+                // has (a stale format is reset by the next XdndEnter anyway).
+                if (_glfw.x11.dragDropSession.enteredTarget == window)
+                {
+                    _glfw.x11.dragDropSession.enteredTarget = NULL;
+                    _glfwInputDragDrop(window, GLFW_DRAGDROP_LEAVE, 0.0, 0.0,
+                                       _glfw.x11.dragDropSession.type);
+                }
+
+                _glfw.x11.xdnd.format = None;
+            }
+            else if (event->xclient.message_type == _glfw.x11.XdndStatus)
+            {
+                // The current target's verdict on this application's own
+                // XdndEnter/XdndPosition (we are the drag source here; see
+                // _glfwStartDragDropX11). A stale verdict from a target the
+                // drag has already left is ignored.
+                if (window == _glfw.x11.dragDropSession.window &&
+                    (Window) event->xclient.data.l[0] == _glfw.x11.dragDropSession.target)
+                {
+                    _glfw.x11.dragDropSession.awaitingStatus = GLFW_FALSE;
+                    _glfw.x11.dragDropSession.targetAccepts =
+                        (event->xclient.data.l[1] & 1) ? GLFW_TRUE : GLFW_FALSE;
+
+                    if (_glfw.x11.dragDropSession.releasePending)
+                    {
+                        // The release already happened; this verdict is what
+                        // decides between drop and cancel
+                        _glfw.x11.dragDropSession.releasePending = GLFW_FALSE;
+
+                        if (_glfw.x11.dragDropSession.targetAccepts)
+                            sendDragDropDrop();
+                        else
+                        {
+                            sendDragDropMessage(_glfw.x11.dragDropSession.target,
+                                                _glfw.x11.XdndLeave, 0, 0, 0, 0);
+                            endDragDropSession();
+                        }
+                    }
+                    else if (_glfw.x11.dragDropSession.positionPending)
+                    {
+                        _glfw.x11.dragDropSession.positionPending = GLFW_FALSE;
+                        sendDragDropPosition(_glfw.x11.dragDropSession.pendingRootX,
+                                             _glfw.x11.dragDropSession.pendingRootY,
+                                             _glfw.x11.dragDropSession.pendingTime);
+                        XFlush(_glfw.x11.display);
+                    }
+                }
+            }
+            else if (event->xclient.message_type == _glfw.x11.XdndFinished)
+            {
+                // The target finished processing the drop; the session is over
+                if (window == _glfw.x11.dragDropSession.window &&
+                    _glfw.x11.dragDropSession.dropSent)
+                {
+                    endDragDropSession();
+                }
             }
 
             return;
@@ -1918,6 +2322,19 @@ static void processEvent(XEvent *event)
                                False, NoEventMask, &reply);
                     XFlush(_glfw.x11.display);
                 }
+            }
+
+            return;
+        }
+
+        case SelectionClear:
+        {
+            // Another client claimed XdndSelection: this window's own
+            // drag-and-drop session was preempted
+            if (event->xselectionclear.selection == _glfw.x11.XdndSelection &&
+                window == _glfw.x11.dragDropSession.window)
+            {
+                endDragDropSession();
             }
 
             return;
@@ -2261,6 +2678,13 @@ GLFWbool _glfwCreateWindowX11(_GLFWwindow* window,
 
 void _glfwDestroyWindowX11(_GLFWwindow* window)
 {
+    // The session must not outlive a window it points at
+    if (_glfw.x11.dragDropSession.enteredTarget == window)
+        _glfw.x11.dragDropSession.enteredTarget = NULL;
+
+    if (_glfw.x11.dragDropSession.window == window)
+        endDragDropSession();
+
     if (_glfw.x11.disabledCursorWindow == window)
         enableCursor(window);
 
@@ -2759,6 +3183,166 @@ void _glfwDragWindowX11(_GLFWwindow* window)
     _glfwInputMouseClick(window, GLFW_MOUSE_BUTTON_LEFT, GLFW_RELEASE, 0);
 }
 
+GLFWbool _glfwStartDragDropX11(_GLFWwindow* window, const char* type)
+{
+    // One session at a time, and only off a live left-button press -- its
+    // implicit grab is what routes every motion event and the release to
+    // `window` for the whole drag (see MotionNotify and ButtonRelease in
+    // processEvent)
+    if (_glfw.x11.dragDropSession.window)
+        return GLFW_FALSE;
+
+    if (window->mouseButtons[GLFW_MOUSE_BUTTON_LEFT] != GLFW_PRESS)
+        return GLFW_FALSE;
+
+    // Owning XdndSelection is what marks this client as the XDND source;
+    // targets convert it for the payload, which handleSelectionRequest serves
+    // empty -- no data is transferred, the session exists only for per-window
+    // enter/motion/leave/drop routing (see glfwStartDragDrop)
+    XSetSelectionOwner(_glfw.x11.display, _glfw.x11.XdndSelection,
+                       window->x11.handle, CurrentTime);
+
+    if (XGetSelectionOwner(_glfw.x11.display, _glfw.x11.XdndSelection) !=
+        window->x11.handle)
+    {
+        return GLFW_FALSE;
+    }
+
+    memset(&_glfw.x11.dragDropSession, 0, sizeof(_glfw.x11.dragDropSession));
+    _glfw.x11.dragDropSession.window = window;
+    _glfw.x11.dragDropSession.type = _glfw_strdup(type);
+    _glfw.x11.dragDropSession.typeAtom =
+        XInternAtom(_glfw.x11.display, type, False);
+
+    return GLFW_TRUE;
+}
+
+GLFWbool _glfwSetDragDropIconX11(_GLFWwindow* window, const GLFWimage* image,
+                                 int xhot, int yhot)
+{
+    if (_glfw.x11.dragDropSession.window != window)
+        return GLFW_FALSE;
+
+    // The icon needs a 32-bit visual for its transparency (without a
+    // compositor running the alpha channel is simply ignored)
+    XVisualInfo vinfo;
+    if (!XMatchVisualInfo(_glfw.x11.display, _glfw.x11.screen, 32, TrueColor,
+                          &vinfo))
+    {
+        return GLFW_FALSE;
+    }
+
+    // Replacing an existing icon: drop the old window and start over
+    if (_glfw.x11.dragDropSession.iconWindow)
+    {
+        XDestroyWindow(_glfw.x11.display, _glfw.x11.dragDropSession.iconWindow);
+        _glfw.x11.dragDropSession.iconWindow = None;
+    }
+
+    if (_glfw.x11.dragDropSession.iconColormap)
+    {
+        XFreeColormap(_glfw.x11.display, _glfw.x11.dragDropSession.iconColormap);
+        _glfw.x11.dragDropSession.iconColormap = None;
+    }
+
+    _glfw.x11.dragDropSession.iconColormap =
+        XCreateColormap(_glfw.x11.display, _glfw.x11.root, vinfo.visual,
+                        AllocNone);
+
+    XSetWindowAttributes wa = { 0 };
+    wa.override_redirect = True;
+    wa.colormap = _glfw.x11.dragDropSession.iconColormap;
+    // Both required when the visual differs from the parent's, or the server
+    // answers BadMatch
+    wa.border_pixel = 0;
+    wa.background_pixel = 0;
+
+    Window root, child;
+    int rootX = 0;
+    int rootY = 0;
+    int childX, childY;
+    unsigned int mask;
+    XQueryPointer(_glfw.x11.display, _glfw.x11.root,
+                  &root, &child, &rootX, &rootY, &childX, &childY, &mask);
+
+    // The icon sits beside the pointer, never under it: findDragDropTarget
+    // hit-tests whatever window is at the exact pointer position, and the
+    // icon must not be the answer. xhot/yhot are accepted for API parity but
+    // not honored, same as the Wayland backend.
+    const Window icon =
+        XCreateWindow(_glfw.x11.display, _glfw.x11.root,
+                      rootX + _GLFW_DRAGDROP_ICON_OFFSET,
+                      rootY + _GLFW_DRAGDROP_ICON_OFFSET,
+                      image->width, image->height,
+                      0, 32, InputOutput, vinfo.visual,
+                      CWOverrideRedirect | CWColormap | CWBorderPixel | CWBackPixel,
+                      &wa);
+    (void) xhot;
+    (void) yhot;
+
+    if (!icon)
+    {
+        XFreeColormap(_glfw.x11.display, _glfw.x11.dragDropSession.iconColormap);
+        _glfw.x11.dragDropSession.iconColormap = None;
+        return GLFW_FALSE;
+    }
+
+    // Premultiplied ARGB, the format composited 32-bit windows expect
+    uint32_t* pixels = _glfw_calloc(image->width * image->height, 4);
+    for (int i = 0;  i < image->width * image->height;  i++)
+    {
+        const unsigned char* rgba = image->pixels + i * 4;
+        const unsigned int alpha = rgba[3];
+        pixels[i] = (uint32_t) alpha << 24 |
+                    (uint32_t) (rgba[0] * alpha / 255) << 16 |
+                    (uint32_t) (rgba[1] * alpha / 255) << 8 |
+                    (uint32_t) (rgba[2] * alpha / 255);
+    }
+
+    XImage* ximage = XCreateImage(_glfw.x11.display, vinfo.visual, 32, ZPixmap,
+                                  0, (char*) pixels,
+                                  image->width, image->height, 32, 0);
+    if (!ximage)
+    {
+        _glfw_free(pixels);
+        XDestroyWindow(_glfw.x11.display, icon);
+        XFreeColormap(_glfw.x11.display, _glfw.x11.dragDropSession.iconColormap);
+        _glfw.x11.dragDropSession.iconColormap = None;
+        return GLFW_FALSE;
+    }
+
+    // `pixels` holds host-order words; tell the server which that is so
+    // XPutImage converts when the two differ
+    const uint32_t byteOrderProbe = 1;
+    ximage->byte_order =
+        *(const unsigned char*) &byteOrderProbe ? LSBFirst : MSBFirst;
+
+    // Painting into the window's background pixmap instead of the window
+    // itself keeps the icon redrawn by the server -- no Expose handling needed
+    const Pixmap pixmap = XCreatePixmap(_glfw.x11.display, icon,
+                                        image->width, image->height, 32);
+    GC gc = XCreateGC(_glfw.x11.display, pixmap, 0, NULL);
+    XPutImage(_glfw.x11.display, pixmap, gc, ximage, 0, 0, 0, 0,
+              image->width, image->height);
+    XFreeGC(_glfw.x11.display, gc);
+
+    // The buffer is ours (allocator mismatch with Xlib's), so detach it
+    // before letting XDestroyImage free the struct
+    ximage->data = NULL;
+    XDestroyImage(ximage);
+    _glfw_free(pixels);
+
+    XSetWindowBackgroundPixmap(_glfw.x11.display, icon, pixmap);
+    // The server keeps the pixmap alive while it's the background
+    XFreePixmap(_glfw.x11.display, pixmap);
+
+    XMapRaised(_glfw.x11.display, icon);
+    XFlush(_glfw.x11.display);
+
+    _glfw.x11.dragDropSession.iconWindow = icon;
+    return GLFW_TRUE;
+}
+
 void _glfwSetWindowMonitorX11(_GLFWwindow* window,
                               _GLFWmonitor* monitor,
                               int xpos, int ypos,
@@ -3094,6 +3678,18 @@ void _glfwPollEventsX11(void)
         {
             _glfwSetCursorPosX11(window, width / 2, height / 2);
         }
+    }
+
+    // A released drag whose target then never answered (an XdndStatus or
+    // XdndFinished owed by a foreign client that stalled or died) must not
+    // leave the session -- and the release it still owes the application --
+    // hanging forever
+    if (_glfw.x11.dragDropSession.window &&
+        (_glfw.x11.dragDropSession.releasePending ||
+         _glfw.x11.dragDropSession.dropSent) &&
+        _glfwPlatformGetTimerValue() > _glfw.x11.dragDropSession.endDeadline)
+    {
+        endDragDropSession();
     }
 
     XFlush(_glfw.x11.display);

@@ -4083,8 +4083,9 @@ GLFWAPI void glfwDragWindow(GLFWwindow* window);
  *  this application's own windows.
  *
  *  Delegates to the OS's own native cross-window drag-and-drop mechanism --
- *  Wayland's `wl_data_device`, and analogously OLE drag-and-drop on Windows or
- *  `NSDraggingSession` on macOS where implemented -- so the OS itself, which
+ *  Wayland's `wl_data_device`, the XDND protocol on X11, and analogously OLE
+ *  drag-and-drop on Windows or `NSDraggingSession` on macOS where
+ *  implemented -- so the OS itself, which
  *  knows real screen geometry unlike this client on every platform, routes
  *  @ref GLFWdragdropfun events to whichever of this application's own windows
  *  the cursor is actually over for the rest of the gesture, and @ref

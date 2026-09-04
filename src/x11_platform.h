@@ -32,6 +32,7 @@
 #include <X11/Xlib.h>
 #include <X11/keysym.h>
 #include <X11/Xatom.h>
+#include <X11/Xutil.h>
 #include <X11/Xresource.h>
 #include <X11/Xcursor/Xcursor.h>
 
@@ -104,12 +105,16 @@ typedef int (* PFN_XChangeProperty)(Display*,Window,Atom,Atom,int,int,const unsi
 typedef int (* PFN_XChangeWindowAttributes)(Display*,Window,unsigned long,XSetWindowAttributes*);
 typedef Bool (* PFN_XCheckIfEvent)(Display*,XEvent*,Bool(*)(Display*,XEvent*,XPointer),XPointer);
 typedef Bool (* PFN_XCheckTypedWindowEvent)(Display*,Window,int,XEvent*);
+typedef int (* PFN_XClearWindow)(Display*,Window);
 typedef int (* PFN_XCloseDisplay)(Display*);
 typedef Status (* PFN_XCloseIM)(XIM);
 typedef int (* PFN_XConvertSelection)(Display*,Atom,Atom,Atom,Window,Time);
 typedef Colormap (* PFN_XCreateColormap)(Display*,Window,Visual*,int);
 typedef Cursor (* PFN_XCreateFontCursor)(Display*,unsigned int);
+typedef GC (* PFN_XCreateGC)(Display*,Drawable,unsigned long,XGCValues*);
 typedef XIC (* PFN_XCreateIC)(XIM,...);
+typedef XImage* (* PFN_XCreateImage)(Display*,Visual*,unsigned int,int,int,char*,unsigned int,unsigned int,int,int);
+typedef Pixmap (* PFN_XCreatePixmap)(Display*,Drawable,unsigned int,unsigned int,unsigned int);
 typedef Region (* PFN_XCreateRegion)(void);
 typedef Window (* PFN_XCreateWindow)(Display*,Window,int,int,unsigned int,unsigned int,unsigned int,int,unsigned int,Visual*,unsigned long,XSetWindowAttributes*);
 typedef int (* PFN_XDefineCursor)(Display*,Window,Cursor);
@@ -127,6 +132,8 @@ typedef int (* PFN_XFree)(void*);
 typedef int (* PFN_XFreeColormap)(Display*,Colormap);
 typedef int (* PFN_XFreeCursor)(Display*,Cursor);
 typedef void (* PFN_XFreeEventData)(Display*,XGenericEventCookie*);
+typedef int (* PFN_XFreeGC)(Display*,GC);
+typedef int (* PFN_XFreePixmap)(Display*,Pixmap);
 typedef int (* PFN_XGetErrorText)(Display*,int,char*,int);
 typedef Bool (* PFN_XGetEventData)(Display*,XGenericEventCookie*);
 typedef char* (* PFN_XGetICValues)(XIC,...);
@@ -146,6 +153,7 @@ typedef Atom (* PFN_XInternAtom)(Display*,const char*,Bool);
 typedef int (* PFN_XLookupString)(XKeyEvent*,char*,int,KeySym*,XComposeStatus*);
 typedef int (* PFN_XMapRaised)(Display*,Window);
 typedef int (* PFN_XMapWindow)(Display*,Window);
+typedef Status (* PFN_XMatchVisualInfo)(Display*,int,int,int,XVisualInfo*);
 typedef int (* PFN_XMoveResizeWindow)(Display*,Window,int,int,unsigned int,unsigned int);
 typedef int (* PFN_XMoveWindow)(Display*,Window,int,int);
 typedef int (* PFN_XNextEvent)(Display*,XEvent*);
@@ -153,6 +161,7 @@ typedef Display* (* PFN_XOpenDisplay)(const char*);
 typedef XIM (* PFN_XOpenIM)(Display*,XrmDatabase*,char*,char*);
 typedef int (* PFN_XPeekEvent)(Display*,XEvent*);
 typedef int (* PFN_XPending)(Display*);
+typedef int (* PFN_XPutImage)(Display*,Drawable,GC,XImage*,int,int,int,int,unsigned int,unsigned int);
 typedef Bool (* PFN_XQueryExtension)(Display*,const char*,int*,int*,int*);
 typedef Bool (* PFN_XQueryPointer)(Display*,Window,Window*,Window*,int*,int*,int*,int*,unsigned int*);
 typedef int (* PFN_XRaiseWindow)(Display*,Window);
@@ -173,6 +182,7 @@ typedef int (* PFN_XSetSelectionOwner)(Display*,Atom,Window,Time);
 typedef int (* PFN_XSetWMHints)(Display*,Window,XWMHints*);
 typedef void (* PFN_XSetWMNormalHints)(Display*,Window,XSizeHints*);
 typedef Status (* PFN_XSetWMProtocols)(Display*,Window,Atom*,int);
+typedef int (* PFN_XSetWindowBackgroundPixmap)(Display*,Window,Pixmap);
 typedef Bool (* PFN_XSupportsLocale)(void);
 typedef int (* PFN_XSync)(Display*,Bool);
 typedef Bool (* PFN_XTranslateCoordinates)(Display*,Window,Window,int,int,int*,int*,Window*);
@@ -206,12 +216,16 @@ typedef void (* PFN_Xutf8SetWMProperties)(Display*,Window,const char*,const char
 #define XChangeWindowAttributes _glfw.x11.xlib.ChangeWindowAttributes
 #define XCheckIfEvent _glfw.x11.xlib.CheckIfEvent
 #define XCheckTypedWindowEvent _glfw.x11.xlib.CheckTypedWindowEvent
+#define XClearWindow _glfw.x11.xlib.ClearWindow
 #define XCloseDisplay _glfw.x11.xlib.CloseDisplay
 #define XCloseIM _glfw.x11.xlib.CloseIM
 #define XConvertSelection _glfw.x11.xlib.ConvertSelection
 #define XCreateColormap _glfw.x11.xlib.CreateColormap
 #define XCreateFontCursor _glfw.x11.xlib.CreateFontCursor
+#define XCreateGC _glfw.x11.xlib.CreateGC
 #define XCreateIC _glfw.x11.xlib.CreateIC
+#define XCreateImage _glfw.x11.xlib.CreateImage
+#define XCreatePixmap _glfw.x11.xlib.CreatePixmap
 #define XCreateRegion _glfw.x11.xlib.CreateRegion
 #define XCreateWindow _glfw.x11.xlib.CreateWindow
 #define XDefineCursor _glfw.x11.xlib.DefineCursor
@@ -229,6 +243,8 @@ typedef void (* PFN_Xutf8SetWMProperties)(Display*,Window,const char*,const char
 #define XFreeColormap _glfw.x11.xlib.FreeColormap
 #define XFreeCursor _glfw.x11.xlib.FreeCursor
 #define XFreeEventData _glfw.x11.xlib.FreeEventData
+#define XFreeGC _glfw.x11.xlib.FreeGC
+#define XFreePixmap _glfw.x11.xlib.FreePixmap
 #define XGetErrorText _glfw.x11.xlib.GetErrorText
 #define XGetEventData _glfw.x11.xlib.GetEventData
 #define XGetICValues _glfw.x11.xlib.GetICValues
@@ -247,12 +263,14 @@ typedef void (* PFN_Xutf8SetWMProperties)(Display*,Window,const char*,const char
 #define XLookupString _glfw.x11.xlib.LookupString
 #define XMapRaised _glfw.x11.xlib.MapRaised
 #define XMapWindow _glfw.x11.xlib.MapWindow
+#define XMatchVisualInfo _glfw.x11.xlib.MatchVisualInfo
 #define XMoveResizeWindow _glfw.x11.xlib.MoveResizeWindow
 #define XMoveWindow _glfw.x11.xlib.MoveWindow
 #define XNextEvent _glfw.x11.xlib.NextEvent
 #define XOpenIM _glfw.x11.xlib.OpenIM
 #define XPeekEvent _glfw.x11.xlib.PeekEvent
 #define XPending _glfw.x11.xlib.Pending
+#define XPutImage _glfw.x11.xlib.PutImage
 #define XQueryExtension _glfw.x11.xlib.QueryExtension
 #define XQueryPointer _glfw.x11.xlib.QueryPointer
 #define XRaiseWindow _glfw.x11.xlib.RaiseWindow
@@ -273,6 +291,7 @@ typedef void (* PFN_Xutf8SetWMProperties)(Display*,Window,const char*,const char
 #define XSetWMHints _glfw.x11.xlib.SetWMHints
 #define XSetWMNormalHints _glfw.x11.xlib.SetWMNormalHints
 #define XSetWMProtocols _glfw.x11.xlib.SetWMProtocols
+#define XSetWindowBackgroundPixmap _glfw.x11.xlib.SetWindowBackgroundPixmap
 #define XSupportsLocale _glfw.x11.xlib.SupportsLocale
 #define XSync _glfw.x11.xlib.Sync
 #define XTranslateCoordinates _glfw.x11.xlib.TranslateCoordinates
@@ -624,6 +643,7 @@ typedef struct _GLFWlibraryX11
     Atom            XdndStatus;
     Atom            XdndActionCopy;
     Atom            XdndDrop;
+    Atom            XdndLeave;
     Atom            XdndFinished;
     Atom            XdndSelection;
     Atom            XdndTypeList;
@@ -653,12 +673,16 @@ typedef struct _GLFWlibraryX11
         PFN_XChangeWindowAttributes ChangeWindowAttributes;
         PFN_XCheckIfEvent CheckIfEvent;
         PFN_XCheckTypedWindowEvent CheckTypedWindowEvent;
+        PFN_XClearWindow ClearWindow;
         PFN_XCloseDisplay CloseDisplay;
         PFN_XCloseIM CloseIM;
         PFN_XConvertSelection ConvertSelection;
         PFN_XCreateColormap CreateColormap;
         PFN_XCreateFontCursor CreateFontCursor;
+        PFN_XCreateGC CreateGC;
         PFN_XCreateIC CreateIC;
+        PFN_XCreateImage CreateImage;
+        PFN_XCreatePixmap CreatePixmap;
         PFN_XCreateRegion CreateRegion;
         PFN_XCreateWindow CreateWindow;
         PFN_XDefineCursor DefineCursor;
@@ -676,6 +700,8 @@ typedef struct _GLFWlibraryX11
         PFN_XFreeColormap FreeColormap;
         PFN_XFreeCursor FreeCursor;
         PFN_XFreeEventData FreeEventData;
+        PFN_XFreeGC FreeGC;
+        PFN_XFreePixmap FreePixmap;
         PFN_XGetErrorText GetErrorText;
         PFN_XGetEventData GetEventData;
         PFN_XGetICValues GetICValues;
@@ -694,12 +720,14 @@ typedef struct _GLFWlibraryX11
         PFN_XLookupString LookupString;
         PFN_XMapRaised MapRaised;
         PFN_XMapWindow MapWindow;
+        PFN_XMatchVisualInfo MatchVisualInfo;
         PFN_XMoveResizeWindow MoveResizeWindow;
         PFN_XMoveWindow MoveWindow;
         PFN_XNextEvent NextEvent;
         PFN_XOpenIM OpenIM;
         PFN_XPeekEvent PeekEvent;
         PFN_XPending Pending;
+        PFN_XPutImage PutImage;
         PFN_XQueryExtension QueryExtension;
         PFN_XQueryPointer QueryPointer;
         PFN_XRaiseWindow RaiseWindow;
@@ -720,6 +748,7 @@ typedef struct _GLFWlibraryX11
         PFN_XSetWMHints SetWMHints;
         PFN_XSetWMNormalHints SetWMNormalHints;
         PFN_XSetWMProtocols SetWMProtocols;
+        PFN_XSetWindowBackgroundPixmap SetWindowBackgroundPixmap;
         PFN_XSupportsLocale SupportsLocale;
         PFN_XSync Sync;
         PFN_XTranslateCoordinates TranslateCoordinates;
@@ -802,6 +831,36 @@ typedef struct _GLFWlibraryX11
         Window      source;
         Atom        format;
     } xdnd;
+
+    // Source-side state for a drag-and-drop session started by
+    // _glfwStartDragDropX11; `window` is non-NULL while one is active.
+    // `target` is the XdndAware window currently under the pointer that
+    // XdndEnter/Position/Leave/Drop traffic is addressed to, while
+    // `enteredTarget` is the local window (if any) the session has delivered
+    // GLFW_DRAGDROP_ENTER to through the receive-side routing.
+    struct {
+        _GLFWwindow* window;
+        char*       type;
+        Atom        typeAtom;
+        Window      target;
+        int         targetVersion;
+        GLFWbool    targetAccepts;
+        GLFWbool    awaitingStatus;
+        GLFWbool    positionPending;
+        int         pendingRootX;
+        int         pendingRootY;
+        Time        pendingTime;
+        GLFWbool    releasePending;
+        Time        releaseTime;
+        GLFWbool    dropSent;
+        GLFWbool    dropReceived;
+        uint64_t    endDeadline;
+        _GLFWwindow* enteredTarget;
+        double      enteredX;
+        double      enteredY;
+        Window      iconWindow;
+        Colormap    iconColormap;
+    } dragDropSession;
 
     struct {
         void*       handle;
@@ -923,6 +982,8 @@ void _glfwHideWindowX11(_GLFWwindow* window);
 void _glfwRequestWindowAttentionX11(_GLFWwindow* window);
 void _glfwFocusWindowX11(_GLFWwindow* window);
 void _glfwDragWindowX11(_GLFWwindow* window);
+GLFWbool _glfwStartDragDropX11(_GLFWwindow* window, const char* type);
+GLFWbool _glfwSetDragDropIconX11(_GLFWwindow* window, const GLFWimage* image, int xhot, int yhot);
 void _glfwSetWindowMonitorX11(_GLFWwindow* window, _GLFWmonitor* monitor, int xpos, int ypos, int width, int height, int refreshRate);
 GLFWbool _glfwWindowFocusedX11(_GLFWwindow* window);
 GLFWbool _glfwWindowIconifiedX11(_GLFWwindow* window);

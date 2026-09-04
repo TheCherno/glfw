@@ -942,6 +942,7 @@ static GLFWbool initExtensions(void)
     _glfw.x11.XdndStatus = XInternAtom(_glfw.x11.display, "XdndStatus", False);
     _glfw.x11.XdndActionCopy = XInternAtom(_glfw.x11.display, "XdndActionCopy", False);
     _glfw.x11.XdndDrop = XInternAtom(_glfw.x11.display, "XdndDrop", False);
+    _glfw.x11.XdndLeave = XInternAtom(_glfw.x11.display, "XdndLeave", False);
     _glfw.x11.XdndFinished = XInternAtom(_glfw.x11.display, "XdndFinished", False);
     _glfw.x11.XdndSelection = XInternAtom(_glfw.x11.display, "XdndSelection", False);
     _glfw.x11.XdndTypeList = XInternAtom(_glfw.x11.display, "XdndTypeList", False);
@@ -1229,6 +1230,8 @@ GLFWbool _glfwConnectX11(int platformID, _GLFWplatform* platform)
         .requestWindowAttention = _glfwRequestWindowAttentionX11,
         .focusWindow = _glfwFocusWindowX11,
         .dragWindow = _glfwDragWindowX11,
+        .startDragDrop = _glfwStartDragDropX11,
+        .setDragDropIcon = _glfwSetDragDropIconX11,
         .setWindowMonitor = _glfwSetWindowMonitorX11,
         .windowFocused = _glfwWindowFocusedX11,
         .windowIconified = _glfwWindowIconifiedX11,
@@ -1340,6 +1343,8 @@ int _glfwInitX11(void)
         _glfwPlatformGetModuleSymbol(_glfw.x11.xlib.handle, "XCheckIfEvent");
     _glfw.x11.xlib.CheckTypedWindowEvent = (PFN_XCheckTypedWindowEvent)
         _glfwPlatformGetModuleSymbol(_glfw.x11.xlib.handle, "XCheckTypedWindowEvent");
+    _glfw.x11.xlib.ClearWindow = (PFN_XClearWindow)
+        _glfwPlatformGetModuleSymbol(_glfw.x11.xlib.handle, "XClearWindow");
     _glfw.x11.xlib.CloseDisplay = (PFN_XCloseDisplay)
         _glfwPlatformGetModuleSymbol(_glfw.x11.xlib.handle, "XCloseDisplay");
     _glfw.x11.xlib.CloseIM = (PFN_XCloseIM)
@@ -1350,8 +1355,14 @@ int _glfwInitX11(void)
         _glfwPlatformGetModuleSymbol(_glfw.x11.xlib.handle, "XCreateColormap");
     _glfw.x11.xlib.CreateFontCursor = (PFN_XCreateFontCursor)
         _glfwPlatformGetModuleSymbol(_glfw.x11.xlib.handle, "XCreateFontCursor");
+    _glfw.x11.xlib.CreateGC = (PFN_XCreateGC)
+        _glfwPlatformGetModuleSymbol(_glfw.x11.xlib.handle, "XCreateGC");
     _glfw.x11.xlib.CreateIC = (PFN_XCreateIC)
         _glfwPlatformGetModuleSymbol(_glfw.x11.xlib.handle, "XCreateIC");
+    _glfw.x11.xlib.CreateImage = (PFN_XCreateImage)
+        _glfwPlatformGetModuleSymbol(_glfw.x11.xlib.handle, "XCreateImage");
+    _glfw.x11.xlib.CreatePixmap = (PFN_XCreatePixmap)
+        _glfwPlatformGetModuleSymbol(_glfw.x11.xlib.handle, "XCreatePixmap");
     _glfw.x11.xlib.CreateRegion = (PFN_XCreateRegion)
         _glfwPlatformGetModuleSymbol(_glfw.x11.xlib.handle, "XCreateRegion");
     _glfw.x11.xlib.CreateWindow = (PFN_XCreateWindow)
@@ -1386,6 +1397,10 @@ int _glfwInitX11(void)
         _glfwPlatformGetModuleSymbol(_glfw.x11.xlib.handle, "XFreeCursor");
     _glfw.x11.xlib.FreeEventData = (PFN_XFreeEventData)
         _glfwPlatformGetModuleSymbol(_glfw.x11.xlib.handle, "XFreeEventData");
+    _glfw.x11.xlib.FreeGC = (PFN_XFreeGC)
+        _glfwPlatformGetModuleSymbol(_glfw.x11.xlib.handle, "XFreeGC");
+    _glfw.x11.xlib.FreePixmap = (PFN_XFreePixmap)
+        _glfwPlatformGetModuleSymbol(_glfw.x11.xlib.handle, "XFreePixmap");
     _glfw.x11.xlib.GetErrorText = (PFN_XGetErrorText)
         _glfwPlatformGetModuleSymbol(_glfw.x11.xlib.handle, "XGetErrorText");
     _glfw.x11.xlib.GetEventData = (PFN_XGetEventData)
@@ -1422,6 +1437,8 @@ int _glfwInitX11(void)
         _glfwPlatformGetModuleSymbol(_glfw.x11.xlib.handle, "XMapRaised");
     _glfw.x11.xlib.MapWindow = (PFN_XMapWindow)
         _glfwPlatformGetModuleSymbol(_glfw.x11.xlib.handle, "XMapWindow");
+    _glfw.x11.xlib.MatchVisualInfo = (PFN_XMatchVisualInfo)
+        _glfwPlatformGetModuleSymbol(_glfw.x11.xlib.handle, "XMatchVisualInfo");
     _glfw.x11.xlib.MoveResizeWindow = (PFN_XMoveResizeWindow)
         _glfwPlatformGetModuleSymbol(_glfw.x11.xlib.handle, "XMoveResizeWindow");
     _glfw.x11.xlib.MoveWindow = (PFN_XMoveWindow)
@@ -1434,6 +1451,8 @@ int _glfwInitX11(void)
         _glfwPlatformGetModuleSymbol(_glfw.x11.xlib.handle, "XPeekEvent");
     _glfw.x11.xlib.Pending = (PFN_XPending)
         _glfwPlatformGetModuleSymbol(_glfw.x11.xlib.handle, "XPending");
+    _glfw.x11.xlib.PutImage = (PFN_XPutImage)
+        _glfwPlatformGetModuleSymbol(_glfw.x11.xlib.handle, "XPutImage");
     _glfw.x11.xlib.QueryExtension = (PFN_XQueryExtension)
         _glfwPlatformGetModuleSymbol(_glfw.x11.xlib.handle, "XQueryExtension");
     _glfw.x11.xlib.QueryPointer = (PFN_XQueryPointer)
@@ -1474,6 +1493,8 @@ int _glfwInitX11(void)
         _glfwPlatformGetModuleSymbol(_glfw.x11.xlib.handle, "XSetWMNormalHints");
     _glfw.x11.xlib.SetWMProtocols = (PFN_XSetWMProtocols)
         _glfwPlatformGetModuleSymbol(_glfw.x11.xlib.handle, "XSetWMProtocols");
+    _glfw.x11.xlib.SetWindowBackgroundPixmap = (PFN_XSetWindowBackgroundPixmap)
+        _glfwPlatformGetModuleSymbol(_glfw.x11.xlib.handle, "XSetWindowBackgroundPixmap");
     _glfw.x11.xlib.SupportsLocale = (PFN_XSupportsLocale)
         _glfwPlatformGetModuleSymbol(_glfw.x11.xlib.handle, "XSupportsLocale");
     _glfw.x11.xlib.Sync = (PFN_XSync)
