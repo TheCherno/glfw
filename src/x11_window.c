@@ -452,6 +452,67 @@ static char* convertLatin1toUTF8(const char* source)
     return target;
 }
 
+// Resize-border hit test for undecorated windows: the _NET_WM_MOVERESIZE direction
+// (0=TL 1=T 2=TR 3=R 4=BR 5=B 6=BL 7=L) for a point inside the resize band, or -1
+// outside it. Shared by ButtonPress (which starts the WM resize from it) and the
+// cursor update (which shows the matching resize shape on plain hover), so the two
+// can never disagree about where the band is.
+//
+static int resizeBorderDirection(_GLFWwindow* window, int x, int y)
+{
+    if (window->decorated || window->monitor || !_glfw.x11.NET_WM_MOVERESIZE)
+        return -1;
+
+    int w, h;
+    _glfwGetWindowSizeX11(window, &w, &h);
+
+    const int border = 8; // px — resize hit zone
+    const GLFWbool onLeft   = (x < border);
+    const GLFWbool onRight  = (x >= w - border);
+    const GLFWbool onTop    = (y < border);
+    const GLFWbool onBottom = (y >= h - border);
+
+    if (onTop && onLeft)
+        return 0;
+    if (onTop && onRight)
+        return 2;
+    if (onBottom && onLeft)
+        return 6;
+    if (onBottom && onRight)
+        return 4;
+    if (onTop)
+        return 1;
+    if (onBottom)
+        return 5;
+    if (onLeft)
+        return 7;
+    if (onRight)
+        return 3;
+
+    return -1;
+}
+
+// The core cursor-font shape matching each resize direction above, created on first
+// use and kept for the process lifetime.
+//
+static Cursor resizeBorderCursor(int direction)
+{
+    static Cursor cursors[8];
+    static const unsigned int shapes[8] =
+    {
+        XC_top_left_corner, XC_top_side, XC_top_right_corner, XC_right_side,
+        XC_bottom_right_corner, XC_bottom_side, XC_bottom_left_corner, XC_left_side
+    };
+
+    if (direction < 0 || direction > 7)
+        return None;
+
+    if (!cursors[direction])
+        cursors[direction] = XCreateFontCursor(_glfw.x11.display, shapes[direction]);
+
+    return cursors[direction];
+}
+
 // Updates the cursor image according to its cursor mode
 //
 static void updateCursorImage(_GLFWwindow* window)
@@ -459,6 +520,21 @@ static void updateCursorImage(_GLFWwindow* window)
     if (window->cursorMode == GLFW_CURSOR_NORMAL ||
         window->cursorMode == GLFW_CURSOR_CAPTURED)
     {
+        // Hovering an undecorated window's resize band shows the matching resize
+        // shape, overriding whatever cursor the app keeps pushing (ImGui re-asserts
+        // its own every frame through glfwSetCursor, which lands back here) --
+        // clicking in the band starts the WM resize (see ButtonPress), so the hover
+        // feedback has to agree with it.
+        const int direction = resizeBorderDirection(window,
+                                                    window->x11.lastCursorPosX,
+                                                    window->x11.lastCursorPosY);
+        if (direction >= 0)
+        {
+            XDefineCursor(_glfw.x11.display, window->x11.handle,
+                          resizeBorderCursor(direction));
+            return;
+        }
+
         if (window->cursor)
         {
             XDefineCursor(_glfw.x11.display, window->x11.handle,
@@ -1389,27 +1465,10 @@ static void processEvent(XEvent *event)
                 {
                     const int x = event->xbutton.x;
                     const int y = event->xbutton.y;
-                    int w, h;
-                    _glfwGetWindowSizeX11(window, &w, &h);
 
-                    // _NET_WM_MOVERESIZE directions
-                    // 0=TL 1=T 2=TR 3=R 4=BR 5=B 6=BL 7=L 8=MOVE
-                    const int border = 8; // px — resize hit zone
-                    int dir = -1;
-
-                    const GLFWbool onLeft   = (x < border);
-                    const GLFWbool onRight  = (x >= w - border);
-                    const GLFWbool onTop    = (y < border);
-                    const GLFWbool onBottom = (y >= h - border);
-
-                    if      (onTop    && onLeft)  dir = 0; // TL
-                    else if (onTop    && onRight) dir = 2; // TR
-                    else if (onBottom && onLeft)  dir = 6; // BL
-                    else if (onBottom && onRight) dir = 4; // BR
-                    else if (onTop)               dir = 1; // T
-                    else if (onBottom)            dir = 5; // B
-                    else if (onLeft)              dir = 7; // L
-                    else if (onRight)             dir = 3; // R
+                    // _NET_WM_MOVERESIZE directions: 0-7 are the resize edges
+                    // (resizeBorderDirection), 8 is MOVE for a titlebar hit below.
+                    int dir = resizeBorderDirection(window, x, y);
 
                     // If not a resize edge, check titlebar for drag
                     if (dir < 0)
@@ -1584,8 +1643,19 @@ static void processEvent(XEvent *event)
                     _glfwInputCursorPos(window, x, y);
             }
 
+            // Crossing into, out of, or between the resize band's edges changes which
+            // cursor should show, and the app only pushes a cursor when its own wanted
+            // shape changes -- so re-apply on band transitions here.
+            const int previousDirection = resizeBorderDirection(window,
+                                                                window->x11.lastCursorPosX,
+                                                                window->x11.lastCursorPosY);
+            const int currentDirection = resizeBorderDirection(window, x, y);
+
             window->x11.lastCursorPosX = x;
             window->x11.lastCursorPosY = y;
+
+            if (previousDirection != currentDirection)
+                updateCursorImage(window);
             return;
         }
 
@@ -2649,10 +2719,44 @@ void _glfwFocusWindowX11(_GLFWwindow* window)
 
 void _glfwDragWindowX11(_GLFWwindow* window)
 {
-    // No-op: X11's implicit pointer capture lets callers drive the drag
-    // via glfwSetWindowPos. _NET_WM_MOVERESIZE would steal pointer events
-    // and prevent drop-target hit-testing.
-    (void)window;
+    // Native WM move via _NET_WM_MOVERESIZE, mirroring the undecorated-titlebar
+    // path in ButtonPress above and _glfwDragWindowWayland's handoff. Callers
+    // that need drop-target hit-testing mid-drag (tab tear-out) must NOT use
+    // this on X11: the WM's move grab steals pointer events, so they keep
+    // driving the window themselves via glfwSetWindowPos instead.
+    if (!_glfw.x11.NET_WM_MOVERESIZE)
+        return;
+
+    Window root, child;
+    int rootX, rootY, childX, childY;
+    unsigned int mask;
+    XQueryPointer(_glfw.x11.display, _glfw.x11.root,
+                  &root, &child, &rootX, &rootY, &childX, &childY, &mask);
+
+    // The implicit press grab must be released or the WM cannot take over.
+    XUngrabPointer(_glfw.x11.display, CurrentTime);
+
+    XEvent xev = { 0 };
+    xev.type = ClientMessage;
+    xev.xclient.window = window->x11.handle;
+    xev.xclient.message_type = _glfw.x11.NET_WM_MOVERESIZE;
+    xev.xclient.format = 32;
+    xev.xclient.data.l[0] = rootX;
+    xev.xclient.data.l[1] = rootY;
+    xev.xclient.data.l[2] = 8; // _NET_WM_MOVERESIZE_MOVE
+    xev.xclient.data.l[3] = Button1;
+    xev.xclient.data.l[4] = 1; // source: normal application
+
+    XSendEvent(_glfw.x11.display, _glfw.x11.root, False,
+               SubstructureRedirectMask | SubstructureNotifyMask,
+               &xev);
+    XFlush(_glfw.x11.display);
+
+    // The WM's move grab swallows the button release; synthesize one so the
+    // caller's pressed state (and ImGui's own window move, if it started off
+    // this same press) resolves instead of sticking held. Mirrors
+    // _glfwDragWindowWayland.
+    _glfwInputMouseClick(window, GLFW_MOUSE_BUTTON_LEFT, GLFW_RELEASE, 0);
 }
 
 void _glfwSetWindowMonitorX11(_GLFWwindow* window,
