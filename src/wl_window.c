@@ -2176,7 +2176,13 @@ static void processPointerMotion(double xpos, double ypos)
     // fixed at the source in detectResizeEdge, which now rejects any position outside this
     // window's own extended bounds instead of misreading it as sitting on an edge.
     struct wl_surface* surface = activePointerSurface();
+    if (!surface)
+        return;
+
     _GLFWwindow* window = wl_surface_get_user_data(surface);
+    if (!window)
+        return;
+
     if (window->wl.surface == surface)
     {
         if (window->cursorMode != GLFW_CURSOR_DISABLED)
@@ -2240,6 +2246,12 @@ static void processPointerButton(struct wl_surface* surface, int button, int act
                 {
                     xdg_toplevel_resize(toplevel, _glfw.wl.seat,
                                         _glfw.wl.serial, edges);
+                    // The compositor takes the implicit grab and swallows the release, same
+                    // as xdg_toplevel_move in _glfwDragWindowWayland; account for it here or
+                    // `pointerButtonsDown` ratchets up one per resize and never returns to
+                    // zero, pinning activePointerSurface's stale-surface fallback on forever.
+                    if (_glfw.wl.pointerButtonsDown > 0)
+                        _glfw.wl.pointerButtonsDown--;
                     handled = GLFW_TRUE;
                 }
                 else
@@ -2266,6 +2278,9 @@ static void processPointerButton(struct wl_surface* surface, int button, int act
                             _glfw.wl.titlebarClickTime = time;
                             _glfw.wl.titlebarClickWindow = window;
                             xdg_toplevel_move(toplevel, _glfw.wl.seat, _glfw.wl.serial);
+                            // Same swallowed-release accounting as the resize above.
+                            if (_glfw.wl.pointerButtonsDown > 0)
+                                _glfw.wl.pointerButtonsDown--;
                             handled = GLFW_TRUE;
                         }
                     }
@@ -2285,8 +2300,11 @@ static void processPointerButton(struct wl_surface* surface, int button, int act
 
 static void processPointerScroll(double xoffset, double yoffset)
 {
+    if (!_glfw.wl.pointerSurface)
+        return;
+
     _GLFWwindow* window = wl_surface_get_user_data(_glfw.wl.pointerSurface);
-    if (window->wl.surface == _glfw.wl.pointerSurface)
+    if (window && window->wl.surface == _glfw.wl.pointerSurface)
         _glfwInputScroll(window, xoffset, yoffset);
 }
 
@@ -2416,7 +2434,13 @@ static void pointerHandleButton(void* userData,
     const int action = (state == WL_POINTER_BUTTON_STATE_PRESSED);
 
     struct wl_surface* activeSurface = activePointerSurface();
+    if (!activeSurface)
+        return;
+
     _GLFWwindow* window = wl_surface_get_user_data(activeSurface);
+    if (!window)
+        return;
+
     if (window->wl.fallback.decorations)
     {
         if (action == GLFW_PRESS)
@@ -3352,6 +3376,16 @@ void _glfwDestroyWindowWayland(_GLFWwindow* window)
 
     if (window->wl.surface == _glfw.wl.pointerSurface)
         _glfw.wl.pointerSurface = NULL;
+
+    // The press-time fallback surface (see activePointerSurface) is never cleared by any
+    // pointer event, so a destroyed window would leave it dangling and the next motion
+    // routed through the fallback would read freed user data.
+    if (window->wl.surface == _glfw.wl.pointerButtonSurface)
+        _glfw.wl.pointerButtonSurface = NULL;
+    if (window->wl.surface == _glfw.wl.pending.pointerSurface)
+        _glfw.wl.pending.pointerSurface = NULL;
+    if (window->wl.surface == _glfw.wl.pending.buttonSurface)
+        _glfw.wl.pending.buttonSurface = NULL;
 
     if (window == _glfw.wl.keyboardFocus)
     {
