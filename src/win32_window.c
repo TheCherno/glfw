@@ -88,15 +88,10 @@ static void getFullWindowRect(RECT* rect, DWORD style, DWORD exStyle,
 {
     if (!titlebar && (style & WS_THICKFRAME))
     {
-        const int borderX = dpi ? GetSystemMetricsForDpi(SM_CXFRAME, dpi)
-                                : GetSystemMetrics(SM_CXFRAME);
-        const int borderY = dpi ? GetSystemMetricsForDpi(SM_CYFRAME, dpi)
-                                : GetSystemMetrics(SM_CYFRAME);
-
-        // Mirrors the WM_NCCALCSIZE insets exactly, top included (it isn't inset there either).
-        rect->left   -= borderX;
-        rect->right  += borderX;
-        rect->bottom += borderY;
+        // Mirrors the WM_NCCALCSIZE insets exactly, which for a restored custom-frame window are
+        // none at all: its client fills the whole window rect, so the two rects are the same and
+        // there is nothing to add here.
+        (void)dpi;
         return;
     }
 
@@ -1118,46 +1113,29 @@ static LRESULT CALLBACK windowProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM l
 
             // For custom frames
 
-            // Shrink client area by border thickness so we can
-            // resize window and see borders
-            const int resizeBorderX = GetSystemMetrics(SM_CXFRAME);
-            const int resizeBorderY = GetSystemMetrics(SM_CYFRAME);
+            // Nothing is taken off a restored window: the client is left covering the entire
+            // window rect, so Windows has no strip of its own frame left to paint, which is what
+            // the 1px line down the left, right and bottom edges was. (The top never had one --
+            // it was already the one side not inset here.) Resizing doesn't depend on that strip:
+            // WM_NCHITTEST below reports HTLEFT/HTRIGHT/HTBOTTOM/... from border_thickness
+            // measured inside the client rect, so the grab zone just sits in the outermost few
+            // pixels of the client instead of in a non-client border.
+            if (!IsZoomed(hWnd))
+                return WVR_ALIGNTOP | WVR_ALIGNLEFT;
 
-            // When maximized, Windows expands the window rect past the monitor on every
-            // side by the resize frame PLUS the padded border. The resize-border insets
-            // below only remove the frame, so the client still overhangs each edge by the
-            // padded border (content bleeds off-screen; the cursor, clamped to the visible
-            // screen, can't reach those edges). Fold the padded border in when maximized.
-            const int maximizedPad = IsZoomed(hWnd) ? GetSystemMetrics(SM_CXPADDEDBORDER) : 0;
+            // Maximizing expands the window rect past the monitor on every side by the resize
+            // frame PLUS the padded border. Both come back off here, or the content bleeds
+            // off-screen and the cursor, clamped to the visible screen, can't reach those edges.
+            const int padX = GetSystemMetrics(SM_CXFRAME) + GetSystemMetrics(SM_CXPADDEDBORDER);
+            const int padY = GetSystemMetrics(SM_CYFRAME) + GetSystemMetrics(SM_CXPADDEDBORDER);
 
             NCCALCSIZE_PARAMS* params = (NCCALCSIZE_PARAMS*)lParam;
             RECT* requestedClientRect = params->rgrc;
 
-            requestedClientRect->right -= resizeBorderX + maximizedPad;
-            requestedClientRect->left += resizeBorderX + maximizedPad;
-            requestedClientRect->bottom -= resizeBorderY + maximizedPad;
-
-            //
-            // NOTE(Yan):
-            //
-            // Top borders seem to be handled differently.
-            //
-            // Contracting by 1 on Win 11 seems to give a small area
-            // for resizing whilst not showing a white border.
-            //
-            // But this doesn't seem to work on Win 10, instead showing
-            // a general white titlebar on top of the custom one...
-            // to be continued.
-            //
-            // Not changing the top (i.e. 0) means we don't see the
-            // mouse icon change to a resize handle, but resizing still
-            // works once you click and drag. This works on both
-            // Windows 10 & 11, so we'll keep that for now.
-            //
-            // When maximized, Windows pads the proposed window rect on top by the resize
-            // frame plus the padded border. Undo both so the client sits flush with the
-            // monitor top instead of bleeding off-screen.
-            requestedClientRect->top += (IsZoomed(hWnd) ? resizeBorderY : 0) + maximizedPad;
+            requestedClientRect->left += padX;
+            requestedClientRect->right -= padX;
+            requestedClientRect->top += padY;
+            requestedClientRect->bottom -= padY;
 
             // NOTE(Yan): seems to make no difference what we return here,
             //            was originally 0
