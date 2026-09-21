@@ -1112,7 +1112,7 @@ static void endDragDropSession(void)
     // The session swallowed the real release; synthesize one so the caller's
     // drag resolves after it has learned the outcome, matching the Wayland
     // backend's ordering.
-    _glfwInputDragEnd(window, consumed);
+    _glfwInputDragEnd(window, consumed ? GLFW_DRAGDROP_CONSUMED : GLFW_DRAGDROP_CANCELLED);
     _glfwInputMouseClick(window, GLFW_MOUSE_BUTTON_LEFT, GLFW_RELEASE, 0);
 }
 

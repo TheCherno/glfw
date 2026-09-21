@@ -628,6 +628,7 @@ GLFWbool _glfwConnectWin32(int platformID, _GLFWplatform* platform)
         .dragWindow = _glfwDragWindowWin32,
         .startDragDrop = _glfwStartDragDropWin32,
         .setDragDropIcon = _glfwSetDragDropIconWin32,
+        .setDragDropPayload = _glfwSetDragDropPayloadWin32,
         .setWindowMonitor = _glfwSetWindowMonitorWin32,
         .windowFocused = _glfwWindowFocusedWin32,
         .windowIconified = _glfwWindowIconifiedWin32,

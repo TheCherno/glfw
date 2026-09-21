@@ -422,7 +422,7 @@ static void endDragDropSessionCocoa(void)
 
     if (window)
     {
-        _glfwInputDragEnd(window, consumed);
+        _glfwInputDragEnd(window, consumed ? GLFW_DRAGDROP_CONSUMED : GLFW_DRAGDROP_CANCELLED);
         _glfwInputMouseClick(window, GLFW_MOUSE_BUTTON_LEFT, GLFW_RELEASE, 0);
     }
 }

@@ -351,6 +351,19 @@ extern "C" {
 #define GLFW_DRAGDROP_MOTION        1
 #define GLFW_DRAGDROP_LEAVE         2
 #define GLFW_DRAGDROP_DROP          3
+/*! @brief How a drag-and-drop session started by @ref glfwStartDragDrop
+ *  ended, reported via @ref GLFWdragendfun.
+ *
+ *  A session that offers an external payload (@ref glfwSetDragDropPayload)
+ *  can also be accepted by a foreign application, which is neither a drop on
+ *  one of this application's own windows nor a cancellation. A session
+ *  without one can only ever end in the other two.
+ *
+ *  @ingroup input
+ */
+#define GLFW_DRAGDROP_CANCELLED     0
+#define GLFW_DRAGDROP_CONSUMED      1
+#define GLFW_DRAGDROP_CONSUMED_EXTERNALLY 2
 /*! @brief The key was held down until it repeated.
  *
  *  The key was held down until it repeated.
@@ -2031,17 +2044,20 @@ typedef void (* GLFWdragdropfun)(GLFWwindow* window, int phase, double xpos, dou
 /*! @brief The function pointer type for drag-and-drop end callbacks.
  *
  *  Fires once, on the window that called @ref glfwStartDragDrop, when that
- *  session concludes. `consumed` is nonzero if the drag landed on one of the
- *  application's own windows (a real drop, per @ref GLFW_DRAGDROP_DROP just
- *  before this), zero if it ended without landing anywhere (released outside
- *  every window, or cancelled).
+ *  session concludes. `result` is one of @ref GLFW_DRAGDROP_CONSUMED (the
+ *  drag landed on one of this application's own windows, a real drop per
+ *  @ref GLFW_DRAGDROP_DROP just before this), @ref
+ *  GLFW_DRAGDROP_CONSUMED_EXTERNALLY (a foreign application accepted the
+ *  payload, possible only for a session that offered one, see @ref
+ *  glfwSetDragDropPayload), or @ref GLFW_DRAGDROP_CANCELLED (released
+ *  outside every window, refused, or cancelled).
  *
  *  @sa @ref glfwSetDragEndCallback
  *  @sa @ref glfwStartDragDrop
  *
  *  @ingroup input
  */
-typedef void (* GLFWdragendfun)(GLFWwindow* window, int consumed);
+typedef void (* GLFWdragendfun)(GLFWwindow* window, int result);
 
 /*! @brief The function pointer type for monitor configuration callbacks.
  *
@@ -4155,6 +4171,65 @@ GLFWAPI int glfwStartDragDrop(GLFWwindow* window, const char* type);
  *  @ingroup window
  */
 GLFWAPI int glfwSetDragDropIcon(GLFWwindow* window, const GLFWimage* image, int xhot, int yhot);
+
+/*! @brief Offers a payload to foreign applications for an armed @ref
+ *  glfwStartDragDrop session.
+ *
+ *  By default a session is private to this application: it transfers no
+ *  data, so no other application can accept it, and the platform layer is
+ *  free to refuse a release over a foreign window outright rather than hand
+ *  that application a drop it cannot use (which on Windows also raises it).
+ *  Calling this makes the session a real inter-application drag as well,
+ *  carrying `mime` alongside the private marker that routes it between this
+ *  application's own windows. Routing between those windows is unaffected;
+ *  they identify the session by the `type` given to @ref glfwStartDragDrop
+ *  exactly as before.
+ *
+ *  Call once per format, before the session reaches the OS, which in
+ *  practice means the same frame as @ref glfwStartDragDrop, alongside @ref
+ *  glfwSetDragDropIcon. Offering the same `mime` twice replaces the first.
+ *
+ *  `mime` is a MIME type and `data` must be that type's own wire form, which
+ *  the platform layer translates into whatever the OS's own drag-and-drop
+ *  mechanism transfers. Two are given that treatment:
+ *
+ *  - `text/uri-list`: RFC 2483 URI list, UTF-8, one URI per line, `#`
+ *    comment lines ignored. `file:` URIs become a native file drag (Windows
+ *    `CF_HDROP`), which is what a file manager or editor expects to receive.
+ *  - `text/plain;charset=utf-8` (or `text/plain`): UTF-8 text, transferred
+ *    as the platform's own text flavour (Windows `CF_UNICODETEXT`).
+ *
+ *  Any other `mime` is registered with the OS under that exact name and its
+ *  bytes transferred verbatim, for an application-specific format a
+ *  cooperating application already knows how to read.
+ *
+ *  Because a foreign application can now accept the drag, @ref
+ *  GLFWdragendfun can report @ref GLFW_DRAGDROP_CONSUMED_EXTERNALLY, which a
+ *  caller that treats "not consumed" as "landed nowhere" has to handle.
+ *
+ *  A drop one of this application's own windows receives still carries no
+ *  payload; they share an address space with whatever put the drag together.
+ *
+ *  @param[in] window The window that armed the session.
+ *  @param[in] mime The MIME type of `data`; see above.
+ *  @param[in] data The payload bytes.
+ *  @param[in] size The number of bytes in `data`.
+ *  @return `GLFW_TRUE` if the payload was accepted, `GLFW_FALSE` if there is
+ *  no armed session on this window, if it has already reached the OS, if
+ *  `data` is malformed for `mime`, or on platforms where this isn't
+ *  implemented.
+ *
+ *  @pointer_lifetime The specified data is copied before this function
+ *  returns.
+ *
+ *  @errors Possible errors include @ref GLFW_NOT_INITIALIZED.
+ *
+ *  @thread_safety This function must only be called from the main thread.
+ *
+ *  @ingroup window
+ */
+GLFWAPI int glfwSetDragDropPayload(GLFWwindow* window, const char* mime,
+                                   const void* data, size_t size);
 
 /*! @brief Requests user attention to the specified window.
  *

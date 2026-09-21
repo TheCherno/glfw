@@ -386,6 +386,16 @@ typedef struct _GLFWwindowWin32
     IDropTarget*        dropTarget;
 } _GLFWwindowWin32;
 
+// One payload format a native drag session offers foreign applications (see win32_dnd.c).
+// The bytes are already in the exact shape the clipboard format transfers, rendered once when
+// the payload was set, so handing them to a drop target is a plain copy.
+typedef struct _GLFWdragpayloadWin32
+{
+    UINT                format;
+    void*               bytes;
+    size_t              size;
+} _GLFWdragpayloadWin32;
+
 // Win32-specific global data
 //
 typedef struct _GLFWlibraryWin32
@@ -463,6 +473,11 @@ typedef struct _GLFWlibraryWin32
         GLFWbool            active;         // inside DoDragDrop's modal loop
         GLFWbool            dropReceived;   // a real DROP landed on one of our windows
         _GLFWwindow*        hoverWindow;    // window currently under the drag, for enter/leave
+        // Formats offered to foreign applications, empty unless setDragDropPayload was called.
+        // A session with none is private to this process, which is what lets a release over a
+        // foreign window end as a cancel instead of a drop that window could never have used.
+        _GLFWdragpayloadWin32* payloads;
+        int                 payloadCount;
     } dragDropSession;
 } _GLFWlibraryWin32;
 
@@ -527,6 +542,8 @@ void _glfwFocusWindowWin32(_GLFWwindow* window);
 void _glfwDragWindowWin32(_GLFWwindow* window);
 GLFWbool _glfwStartDragDropWin32(_GLFWwindow* window, const char* type);
 GLFWbool _glfwSetDragDropIconWin32(_GLFWwindow* window, const GLFWimage* image, int xhot, int yhot);
+GLFWbool _glfwSetDragDropPayloadWin32(_GLFWwindow* window, const char* mime,
+                                      const void* data, size_t size);
 // Registers/removes the OLE drop destination for a window (called at create/destroy).
 void _glfwRegisterDropTargetWin32(_GLFWwindow* window);
 void _glfwRevokeDropTargetWin32(_GLFWwindow* window);

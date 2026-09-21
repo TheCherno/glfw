@@ -750,6 +750,8 @@ struct _GLFWplatform
     GLFWbool (*startDragDrop)(_GLFWwindow*,const char*);
     // Left null on platforms that don't need it -- see glfwSetDragDropIcon's own comment.
     GLFWbool (*setDragDropIcon)(_GLFWwindow*,const GLFWimage*,int,int);
+    // Left null on platforms that don't need it -- see glfwSetDragDropPayload's own comment.
+    GLFWbool (*setDragDropPayload)(_GLFWwindow*,const char*,const void*,size_t);
     void (*setWindowMonitor)(_GLFWwindow*,_GLFWmonitor*,int,int,int,int,int);
     GLFWbool (*windowFocused)(_GLFWwindow*);
     GLFWbool (*windowIconified)(_GLFWwindow*);
@@ -959,7 +961,7 @@ void _glfwInputCursorPos(_GLFWwindow* window, double xpos, double ypos);
 void _glfwInputCursorEnter(_GLFWwindow* window, GLFWbool entered);
 void _glfwInputDrop(_GLFWwindow* window, int count, const char** names);
 void _glfwInputDragDrop(_GLFWwindow* window, int phase, double xpos, double ypos, const char* type);
-void _glfwInputDragEnd(_GLFWwindow* window, GLFWbool consumed);
+void _glfwInputDragEnd(_GLFWwindow* window, int result);
 void _glfwInputJoystick(_GLFWjoystick* js, int event);
 void _glfwInputJoystickAxis(_GLFWjoystick* js, int axis, float value);
 void _glfwInputJoystickButton(_GLFWjoystick* js, int button, char value);

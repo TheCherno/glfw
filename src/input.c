@@ -421,12 +421,12 @@ void _glfwInputDragDrop(_GLFWwindow* window, int phase, double xpos, double ypos
 
 // Notifies shared code that a glfwStartDragDrop session on a window has ended
 //
-void _glfwInputDragEnd(_GLFWwindow* window, GLFWbool consumed)
+void _glfwInputDragEnd(_GLFWwindow* window, int result)
 {
     assert(window != NULL);
 
     if (window->callbacks.dragEnd)
-        window->callbacks.dragEnd((GLFWwindow*) window, consumed);
+        window->callbacks.dragEnd((GLFWwindow*) window, result);
 }
 
 // Notifies shared code of a joystick connection or disconnection

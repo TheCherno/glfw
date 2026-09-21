@@ -934,6 +934,21 @@ GLFWAPI int glfwSetDragDropIcon(GLFWwindow* handle, const GLFWimage* image, int 
     return GLFW_FALSE;
 }
 
+GLFWAPI int glfwSetDragDropPayload(GLFWwindow* handle, const char* mime,
+                                   const void* data, size_t size)
+{
+    _GLFW_REQUIRE_INIT_OR_RETURN(GLFW_FALSE);
+
+    _GLFWwindow* window = (_GLFWwindow*) handle;
+    assert(window != NULL);
+    assert(mime != NULL);
+    assert(data != NULL || size == 0);
+
+    if (_glfw.platform.setDragDropPayload)
+        return _glfw.platform.setDragDropPayload(window, mime, data, size);
+    return GLFW_FALSE;
+}
+
 GLFWAPI int glfwGetWindowAttrib(GLFWwindow* handle, int attrib)
 {
     _GLFW_REQUIRE_INIT_OR_RETURN(0);
