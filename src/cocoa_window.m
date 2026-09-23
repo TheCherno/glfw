@@ -2167,6 +2167,12 @@ GLFWbool _glfwCreateStandardCursorCocoa(_GLFWcursor* cursor, int shape)
             case GLFW_NOT_ALLOWED_CURSOR:
                 cursor->ns.object = [NSCursor operationNotAllowedCursor];
                 break;
+            case GLFW_GRAB_CURSOR:
+                cursor->ns.object = [NSCursor openHandCursor];
+                break;
+            case GLFW_GRABBING_CURSOR:
+                cursor->ns.object = [NSCursor closedHandCursor];
+                break;
         }
     }
 

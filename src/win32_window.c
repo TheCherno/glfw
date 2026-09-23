@@ -2530,6 +2530,11 @@ GLFWbool _glfwCreateStandardCursorWin32(_GLFWcursor* cursor, int shape)
         case GLFW_NOT_ALLOWED_CURSOR:
             id = OCR_NO;
             break;
+        case GLFW_GRAB_CURSOR:
+        case GLFW_GRABBING_CURSOR:
+            // Windows has no system grab/grabbing cursor, so pan uses the move (all-directions) shape.
+            id = OCR_SIZEALL;
+            break;
         default:
             _glfwInputError(GLFW_PLATFORM_ERROR, "Win32: Unknown standard cursor");
             return GLFW_FALSE;

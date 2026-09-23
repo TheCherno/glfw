@@ -3869,6 +3869,12 @@ GLFWbool _glfwCreateStandardCursorX11(_GLFWcursor* cursor, int shape)
                 case GLFW_NOT_ALLOWED_CURSOR:
                     name = "not-allowed";
                     break;
+                case GLFW_GRAB_CURSOR:
+                    name = "grab";
+                    break;
+                case GLFW_GRABBING_CURSOR:
+                    name = "grabbing";
+                    break;
             }
 
             XcursorImage* image = XcursorLibraryLoadImage(name, theme, size);
@@ -3906,6 +3912,12 @@ GLFWbool _glfwCreateStandardCursorX11(_GLFWcursor* cursor, int shape)
                 break;
             case GLFW_RESIZE_ALL_CURSOR:
                 native = XC_fleur;
+                break;
+            case GLFW_GRAB_CURSOR:
+            case GLFW_GRABBING_CURSOR:
+                // The X11 core cursor font has no closed-fist shape, so both grab states fall back to
+                // the open hand when the theme provides no "grab"/"grabbing".
+                native = XC_hand1;
                 break;
             default:
                 _glfwInputError(GLFW_CURSOR_UNAVAILABLE,

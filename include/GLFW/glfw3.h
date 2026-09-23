@@ -1308,6 +1308,20 @@ extern "C" {
  *  cursor themes.
  */
 #define GLFW_NOT_ALLOWED_CURSOR     0x0003600A
+/*! @brief The grab (open hand) shape.
+ *
+ *  The open-hand shape shown while a draggable surface can be grabbed to pan it.
+ *
+ *  @note __Windows:__ No system grab cursor exists; the move (all-directions) shape is used.
+ */
+#define GLFW_GRAB_CURSOR            0x0003600B
+/*! @brief The grabbing (closed hand) shape.
+ *
+ *  The closed-hand shape shown while a grabbed surface is being dragged to pan it.
+ *
+ *  @note __Windows:__ No system grabbing cursor exists; the move (all-directions) shape is used.
+ */
+#define GLFW_GRABBING_CURSOR       0x0003600C
 /*! @brief Legacy name for compatibility.
  *
  *  This is an alias for compatibility with earlier versions.

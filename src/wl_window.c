@@ -87,6 +87,8 @@ static const _GLFWcursorDesc cursorTable[] =
     { GLFW_POINTING_HAND_CURSOR, XDG_TOPLEVEL_RESIZE_EDGE_NONE,        WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_POINTER,     "pointer",       "hand2"              },
     { GLFW_RESIZE_ALL_CURSOR,    XDG_TOPLEVEL_RESIZE_EDGE_NONE,        WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_ALL_SCROLL,  "all-scroll",    "fleur"              },
     { GLFW_NOT_ALLOWED_CURSOR,   XDG_TOPLEVEL_RESIZE_EDGE_NONE,        WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_NOT_ALLOWED, "not-allowed",   "not-allowed"        },
+    { GLFW_GRAB_CURSOR,          XDG_TOPLEVEL_RESIZE_EDGE_NONE,        WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_GRAB,        "grab",          "hand1"              },
+    { GLFW_GRABBING_CURSOR,      XDG_TOPLEVEL_RESIZE_EDGE_NONE,        WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_GRABBING,    "grabbing",      "grabbing"           },
 
     // Bidirectional resize cursors (canonical GLFW entries, no specific edge)
     { GLFW_RESIZE_EW_CURSOR,     XDG_TOPLEVEL_RESIZE_EDGE_NONE,        WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_EW_RESIZE,   "ew-resize",     "sb_h_double_arrow"  },
