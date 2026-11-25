@@ -488,8 +488,8 @@ GLFWbool _glfwConnectWayland(int platformID, _GLFWplatform* platform)
         .setCursor = _glfwSetCursorWayland,
         .getScancodeName = _glfwGetScancodeNameWayland,
         .getKeyScancode = _glfwGetKeyScancodeWayland,
-        .setClipboardString = _glfwSetClipboardStringWayland,
-        .getClipboardString = _glfwGetClipboardStringWayland,
+        .setClipboardData = _glfwSetClipboardDataWayland,
+        .getClipboardData = _glfwGetClipboardDataWayland,
 #if defined(GLFW_BUILD_LINUX_JOYSTICK)
         .initJoysticks = _glfwInitJoysticksLinux,
         .terminateJoysticks = _glfwTerminateJoysticksLinux,
@@ -998,7 +998,14 @@ void _glfwTerminateWayland(void)
         wl_cursor_theme_destroy(_glfw.wl.cursorThemeHiDPI);
 
     for (unsigned int i = 0; i < _glfw.wl.offerCount; i++)
+    {
         wl_data_offer_destroy(_glfw.wl.offers[i].offer);
+        _glfwFreeMimeTypesWayland(_glfw.wl.offers[i].mimeTypes,
+                                  _glfw.wl.offers[i].mimeTypeCount);
+    }
+
+    _glfwFreeMimeTypesWayland(_glfw.wl.selectionMimeTypes,
+                              _glfw.wl.selectionMimeTypeCount);
 
     _glfw_free(_glfw.wl.offers);
 
@@ -1074,8 +1081,6 @@ void _glfwTerminateWayland(void)
     _glfwPlatformFreeModule(_glfw.wl.xkb.handle);
     _glfwPlatformFreeModule(_glfw.wl.cursor.handle);
     _glfwPlatformFreeModule(_glfw.wl.client.handle);
-
-    _glfw_free(_glfw.wl.clipboardString);
 
     memset(&_glfw.wl, 0, sizeof(_glfw.wl));
 }

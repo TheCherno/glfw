@@ -590,8 +590,8 @@ GLFWbool _glfwConnectWin32(int platformID, _GLFWplatform* platform)
         .setCursor = _glfwSetCursorWin32,
         .getScancodeName = _glfwGetScancodeNameWin32,
         .getKeyScancode = _glfwGetKeyScancodeWin32,
-        .setClipboardString = _glfwSetClipboardStringWin32,
-        .getClipboardString = _glfwGetClipboardStringWin32,
+        .setClipboardData = _glfwSetClipboardDataWin32,
+        .getClipboardData = _glfwGetClipboardDataWin32,
         .initJoysticks = _glfwInitJoysticksWin32,
         .terminateJoysticks = _glfwTerminateJoysticksWin32,
         .pollJoystick = _glfwPollJoystickWin32,
@@ -703,7 +703,6 @@ void _glfwTerminateWin32(void)
     if (_glfw.win32.mainWindowClass)
         UnregisterClassW(MAKEINTATOM(_glfw.win32.mainWindowClass), _glfw.win32.instance);
 
-    _glfw_free(_glfw.win32.clipboardString);
     _glfw_free(_glfw.win32.rawInput);
 
     _glfwTerminateWGL();

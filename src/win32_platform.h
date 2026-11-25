@@ -406,7 +406,6 @@ typedef struct _GLFWlibraryWin32
     ATOM                mainWindowClass;
     HDEVNOTIFY          deviceNotificationHandle;
     int                 acquiredMonitorCount;
-    char*               clipboardString;
     short int           keycodes[512];
     short int           scancodes[GLFW_KEY_LAST + 1];
     char                keynames[GLFW_KEY_LAST + 1][5];
@@ -587,8 +586,8 @@ GLFWbool _glfwCreateCursorWin32(_GLFWcursor* cursor, const GLFWimage* image, int
 GLFWbool _glfwCreateStandardCursorWin32(_GLFWcursor* cursor, int shape);
 void _glfwDestroyCursorWin32(_GLFWcursor* cursor);
 void _glfwSetCursorWin32(_GLFWwindow* window, _GLFWcursor* cursor);
-void _glfwSetClipboardStringWin32(const char* string);
-const char* _glfwGetClipboardStringWin32(void);
+void _glfwSetClipboardDataWin32(void);
+unsigned char* _glfwGetClipboardDataWin32(const char* mime, size_t* size);
 
 EGLenum _glfwGetEGLPlatformWin32(EGLint** attribs);
 EGLNativeDisplayType _glfwGetEGLNativeDisplayWin32(void);

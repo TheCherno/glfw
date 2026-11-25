@@ -598,6 +598,20 @@ struct _GLFWwindow
     GLFW_PLATFORM_WINDOW_STATE
 };
 
+// [Hazel] The UTF-8 text format, which platforms transfer as their own text format, and which
+// "text/plain" is taken to mean too; see glfwSetClipboardData.
+#define _GLFW_CLIPBOARD_TEXT_MIME "text/plain;charset=utf-8"
+
+// [Hazel] This is one format of the contents glfwSetClipboardData put on the clipboard: an owned
+// copy of a GLFWclipboarditem, its data followed by a zero byte as _glfwCopyClipboardBytes makes it.
+//
+typedef struct _GLFWclipboarditem
+{
+    char*           mime;
+    unsigned char*  data;
+    size_t          size;
+} _GLFWclipboarditem;
+
 // Monitor structure
 //
 struct _GLFWmonitor
@@ -711,8 +725,11 @@ struct _GLFWplatform
     void (*setCursor)(_GLFWwindow*,_GLFWcursor*);
     const char* (*getScancodeName)(int);
     int (*getKeyScancode)(int);
-    void (*setClipboardString)(const char*);
-    const char* (*getClipboardString)(void);
+    // [Hazel] Makes the clipboard hold _glfw.clipboard's items.
+    void (*setClipboardData)(void);
+    // [Hazel] Returns the clipboard's contents in a MIME type, as _glfwCopyClipboardBytes makes
+    // them, or NULL if the clipboard doesn't hold it. A missing format isn't an error.
+    unsigned char* (*getClipboardData)(const char*,size_t*);
     GLFWbool (*initJoysticks)(void);
     void (*terminateJoysticks)(void);
     GLFWbool (*pollJoystick)(_GLFWjoystick*,int);
@@ -807,6 +824,15 @@ struct _GLFWlibrary
 
     _GLFWmonitor**      monitors;
     int                 monitorCount;
+
+    // [Hazel] These are the formats glfwSetClipboardData last put on the clipboard, which a
+    // platform hands out while this process still owns it, and the data glfwGetClipboardData
+    // last returned.
+    struct {
+        _GLFWclipboarditem* items;
+        int                 itemCount;
+        unsigned char*      read;
+    } clipboard;
 
     GLFWbool            joysticksInitialized;
     _GLFWjoystick       joysticks[GLFW_JOYSTICK_LAST + 1];
@@ -999,6 +1025,14 @@ const GLFWvidmode* _glfwChooseVideoMode(_GLFWmonitor* monitor,
                                         const GLFWvidmode* desired);
 int _glfwCompareVideoModes(const GLFWvidmode* first, const GLFWvidmode* second);
 _GLFWmonitor* _glfwAllocMonitor(const char* name, int widthMM, int heightMM);
+
+// [Hazel] Copies `size` bytes into a new buffer with a zero byte after them, the form clipboard
+// data is handed out in, so text is also a C string. Returns NULL when out of memory.
+unsigned char* _glfwCopyClipboardBytes(const void* data, size_t size);
+// [Hazel] Returns the format glfwSetClipboardData put on the clipboard in `mime`, or NULL.
+const _GLFWclipboarditem* _glfwFindClipboardItem(const char* mime);
+// [Hazel] Frees the formats glfwSetClipboardData put on the clipboard.
+void _glfwFreeClipboardItems(void);
 void _glfwFreeMonitor(_GLFWmonitor* monitor);
 void _glfwAllocGammaArrays(GLFWgammaramp* ramp, unsigned int size);
 void _glfwFreeGammaArrays(GLFWgammaramp* ramp);

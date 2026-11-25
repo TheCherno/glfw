@@ -472,8 +472,8 @@ GLFWbool _glfwConnectCocoa(int platformID, _GLFWplatform* platform)
         .setCursor = _glfwSetCursorCocoa,
         .getScancodeName = _glfwGetScancodeNameCocoa,
         .getKeyScancode = _glfwGetKeyScancodeCocoa,
-        .setClipboardString = _glfwSetClipboardStringCocoa,
-        .getClipboardString = _glfwGetClipboardStringCocoa,
+        .setClipboardData = _glfwSetClipboardDataCocoa,
+        .getClipboardData = _glfwGetClipboardDataCocoa,
         .initJoysticks = _glfwInitJoysticksCocoa,
         .terminateJoysticks = _glfwTerminateJoysticksCocoa,
         .pollJoystick = _glfwPollJoystickCocoa,
@@ -650,8 +650,6 @@ void _glfwTerminateCocoa(void)
 
     if (_glfw.ns.keyUpMonitor)
         [NSEvent removeMonitor:_glfw.ns.keyUpMonitor];
-
-    _glfw_free(_glfw.ns.clipboardString);
 
     _glfwTerminateNSGL();
     _glfwTerminateEGL();

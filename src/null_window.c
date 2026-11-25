@@ -548,16 +548,19 @@ void _glfwSetCursorNull(_GLFWwindow* window, _GLFWcursor* cursor)
 {
 }
 
-void _glfwSetClipboardStringNull(const char* string)
+void _glfwSetClipboardDataNull(void)
 {
-    char* copy = _glfw_strdup(string);
-    _glfw_free(_glfw.null.clipboardString);
-    _glfw.null.clipboardString = copy;
+    // [Hazel] The items glfwSetClipboardData keeps are the whole clipboard here.
 }
 
-const char* _glfwGetClipboardStringNull(void)
+unsigned char* _glfwGetClipboardDataNull(const char* mime, size_t* size)
 {
-    return _glfw.null.clipboardString;
+    const _GLFWclipboarditem* item = _glfwFindClipboardItem(mime);
+    if (!item)
+        return NULL;
+
+    *size = item->size;
+    return _glfwCopyClipboardBytes(item->data, item->size);
 }
 
 EGLenum _glfwGetEGLPlatformNull(EGLint** attribs)

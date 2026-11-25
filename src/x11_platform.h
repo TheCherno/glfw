@@ -590,8 +590,9 @@ typedef struct _GLFWlibraryX11
     int             errorCode;
     // Primary selection string (while the primary selection is owned)
     char*           primarySelectionString;
-    // Clipboard string (while the selection is owned)
-    char*           clipboardString;
+    // [Hazel] These are the atoms of _glfw.clipboard's formats' MIME types, one per item, interned
+    // when the clipboard is set, to match the targets other programs ask for against.
+    Atom*           clipboardAtoms;
     // Key name string
     char            keynames[GLFW_KEY_LAST + 1][5];
     // X11 keycode to GLFW key LUT
@@ -1016,8 +1017,8 @@ GLFWbool _glfwCreateCursorX11(_GLFWcursor* cursor, const GLFWimage* image, int x
 GLFWbool _glfwCreateStandardCursorX11(_GLFWcursor* cursor, int shape);
 void _glfwDestroyCursorX11(_GLFWcursor* cursor);
 void _glfwSetCursorX11(_GLFWwindow* window, _GLFWcursor* cursor);
-void _glfwSetClipboardStringX11(const char* string);
-const char* _glfwGetClipboardStringX11(void);
+void _glfwSetClipboardDataX11(void);
+unsigned char* _glfwGetClipboardDataX11(const char* mime, size_t* size);
 
 EGLenum _glfwGetEGLPlatformX11(EGLint** attribs);
 EGLNativeDisplayType _glfwGetEGLNativeDisplayX11(void);

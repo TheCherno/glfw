@@ -30,6 +30,7 @@
 #if defined(_GLFW_WIN32)
 
 #include <limits.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <assert.h>
@@ -2569,61 +2570,10 @@ void _glfwSetCursorWin32(_GLFWwindow* window, _GLFWcursor* cursor)
         updateCursorImage(window);
 }
 
-void _glfwSetClipboardStringWin32(const char* string)
+// Opens the clipboard for this thread, retrying a few times
+//
+static GLFWbool openClipboard(void)
 {
-    int characterCount, tries = 0;
-    HANDLE object;
-    WCHAR* buffer;
-
-    characterCount = MultiByteToWideChar(CP_UTF8, 0, string, -1, NULL, 0);
-    if (!characterCount)
-        return;
-
-    object = GlobalAlloc(GMEM_MOVEABLE, characterCount * sizeof(WCHAR));
-    if (!object)
-    {
-        _glfwInputErrorWin32(GLFW_PLATFORM_ERROR,
-                             "Win32: Failed to allocate global handle for clipboard");
-        return;
-    }
-
-    buffer = GlobalLock(object);
-    if (!buffer)
-    {
-        _glfwInputErrorWin32(GLFW_PLATFORM_ERROR,
-                             "Win32: Failed to lock global handle");
-        GlobalFree(object);
-        return;
-    }
-
-    MultiByteToWideChar(CP_UTF8, 0, string, -1, buffer, characterCount);
-    GlobalUnlock(object);
-
-    // NOTE: Retry clipboard opening a few times as some other application may have it
-    //       open and also the Windows Clipboard History reads it after each update
-    while (!OpenClipboard(_glfw.win32.helperWindowHandle))
-    {
-        Sleep(1);
-        tries++;
-
-        if (tries == 3)
-        {
-            _glfwInputErrorWin32(GLFW_PLATFORM_ERROR,
-                                 "Win32: Failed to open clipboard");
-            GlobalFree(object);
-            return;
-        }
-    }
-
-    EmptyClipboard();
-    SetClipboardData(CF_UNICODETEXT, object);
-    CloseClipboard();
-}
-
-const char* _glfwGetClipboardStringWin32(void)
-{
-    HANDLE object;
-    WCHAR* buffer;
     int tries = 0;
 
     // NOTE: Retry clipboard opening a few times as some other application may have it
@@ -2637,35 +2587,223 @@ const char* _glfwGetClipboardStringWin32(void)
         {
             _glfwInputErrorWin32(GLFW_PLATFORM_ERROR,
                                  "Win32: Failed to open clipboard");
-            return NULL;
+            return GLFW_FALSE;
         }
     }
 
-    object = GetClipboardData(CF_UNICODETEXT);
+    return GLFW_TRUE;
+}
+
+// [Hazel] Returns the clipboard format a MIME type travels as: CF_UNICODETEXT for UTF-8 text,
+// "HTML Format" for HTML, and anything else registered under its own name, as
+// glfwSetDragDropPayload registers its formats. Returns 0 if it can't be registered.
+//
+static UINT clipboardFormat(const char* mime)
+{
+    if (strcmp(mime, _GLFW_CLIPBOARD_TEXT_MIME) == 0)
+        return CF_UNICODETEXT;
+
+    if (strcmp(mime, "text/html") == 0)
+        return RegisterClipboardFormatW(L"HTML Format");
+
+    WCHAR* wideMime = _glfwCreateWideStringFromUTF8Win32(mime);
+    const UINT format = wideMime ? RegisterClipboardFormatW(wideMime) : 0;
+    _glfw_free(wideMime);
+    return format;
+}
+
+// [Hazel] Copies `size` bytes into new movable global memory, for SetClipboardData to own
+//
+static HGLOBAL createClipboardMemory(const void* data, size_t size)
+{
+    HGLOBAL object = GlobalAlloc(GMEM_MOVEABLE, size ? size : 1);
     if (!object)
     {
-        _glfwInputErrorWin32(GLFW_FORMAT_UNAVAILABLE,
-                             "Win32: Failed to convert clipboard to string");
-        CloseClipboard();
+        _glfwInputErrorWin32(GLFW_PLATFORM_ERROR,
+                             "Win32: Failed to allocate global handle for clipboard");
         return NULL;
     }
 
-    buffer = GlobalLock(object);
+    void* buffer = GlobalLock(object);
     if (!buffer)
     {
         _glfwInputErrorWin32(GLFW_PLATFORM_ERROR,
                              "Win32: Failed to lock global handle");
-        CloseClipboard();
+        GlobalFree(object);
         return NULL;
     }
 
-    _glfw_free(_glfw.win32.clipboardString);
-    _glfw.win32.clipboardString = _glfwCreateUTF8FromWideStringWin32(buffer);
+    if (size)
+        memcpy(buffer, data, size);
 
     GlobalUnlock(object);
-    CloseClipboard();
+    return object;
+}
 
-    return _glfw.win32.clipboardString;
+// [Hazel] Returns the offset of `needle` in `size` bytes of `data`, or `size` if it isn't there
+//
+static size_t findBytes(const unsigned char* data, size_t size, const char* needle)
+{
+    const size_t length = strlen(needle);
+    for (size_t i = 0;  i + length <= size;  i++)
+    {
+        if (memcmp(data + i, needle, length) == 0)
+            return i;
+    }
+
+    return size;
+}
+
+// [Hazel] Wraps an HTML document in the header "HTML Format" carries: byte offsets of the document
+// and of the fragment to paste, here the body's contents, or the whole document without a body.
+// Returns NULL when out of memory.
+//
+static HGLOBAL createHtmlClipboardMemory(const unsigned char* html, size_t size)
+{
+    size_t fragmentBegin = findBytes(html, size, "<body>");
+    size_t fragmentEnd = findBytes(html, size, "</body>");
+    if (fragmentBegin < size && fragmentEnd < size && fragmentBegin < fragmentEnd)
+        fragmentBegin += strlen("<body>");
+    else
+    {
+        fragmentBegin = 0;
+        fragmentEnd = size;
+    }
+
+    // Every number is ten digits, so the header's length doesn't depend on them
+    const char* format =
+        "Version:0.9\r\nStartHTML:%010zu\r\nEndHTML:%010zu\r\n"
+        "StartFragment:%010zu\r\nEndFragment:%010zu\r\n";
+    const size_t headerSize = (size_t) snprintf(NULL, 0, format, (size_t) 0, (size_t) 0, (size_t) 0, (size_t) 0);
+
+    char* buffer = _glfw_calloc(headerSize + size + 1, 1);
+    if (!buffer)
+    {
+        _glfwInputError(GLFW_OUT_OF_MEMORY, NULL);
+        return NULL;
+    }
+
+    snprintf(buffer, headerSize + 1, format,
+             headerSize, headerSize + size,
+             headerSize + fragmentBegin, headerSize + fragmentEnd);
+    memcpy(buffer + headerSize, html, size);
+
+    HGLOBAL object = createClipboardMemory(buffer, headerSize + size + 1);
+    _glfw_free(buffer);
+    return object;
+}
+
+// [Hazel] Returns the HTML document in "HTML Format" data, from StartHTML to EndHTML, in the form
+// _glfwCopyClipboardBytes makes, or NULL if the header doesn't say where it is
+//
+static unsigned char* readHtmlClipboardData(const unsigned char* data, size_t size, size_t* length)
+{
+    const size_t startAt = findBytes(data, size, "StartHTML:");
+    const size_t endAt = findBytes(data, size, "EndHTML:");
+    if (startAt == size || endAt == size)
+        return NULL;
+
+    const size_t start = strtoul((const char*) data + startAt + strlen("StartHTML:"), NULL, 10);
+    size_t end = strtoul((const char*) data + endAt + strlen("EndHTML:"), NULL, 10);
+    if (end > size)
+        end = size;
+    if (start >= end)
+        return NULL;
+
+    *length = end - start;
+    return _glfwCopyClipboardBytes(data + start, end - start);
+}
+
+void _glfwSetClipboardDataWin32(void)
+{
+    if (!openClipboard())
+        return;
+
+    EmptyClipboard();
+
+    for (int i = 0;  i < _glfw.clipboard.itemCount;  i++)
+    {
+        const _GLFWclipboarditem* item = _glfw.clipboard.items + i;
+        const UINT format = clipboardFormat(item->mime);
+        if (!format)
+            continue;
+
+        HGLOBAL object = NULL;
+        if (format == CF_UNICODETEXT)
+        {
+            // The item's data ends in a zero byte, so it's already a C string
+            WCHAR* wide = _glfwCreateWideStringFromUTF8Win32((const char*) item->data);
+            if (wide)
+            {
+                object = createClipboardMemory(wide, (wcslen(wide) + 1) * sizeof(WCHAR));
+                _glfw_free(wide);
+            }
+        }
+        else if (strcmp(item->mime, "text/html") == 0)
+            object = createHtmlClipboardMemory(item->data, item->size);
+        else
+            object = createClipboardMemory(item->data, item->size);
+
+        // The clipboard owns the memory once it takes it
+        if (object && !SetClipboardData(format, object))
+        {
+            _glfwInputErrorWin32(GLFW_PLATFORM_ERROR,
+                                 "Win32: Failed to set clipboard data");
+            GlobalFree(object);
+        }
+    }
+
+    CloseClipboard();
+}
+
+unsigned char* _glfwGetClipboardDataWin32(const char* mime, size_t* size)
+{
+    const UINT format = clipboardFormat(mime);
+    if (!format || !IsClipboardFormatAvailable(format))
+        return NULL;
+
+    if (!openClipboard())
+        return NULL;
+
+    unsigned char* result = NULL;
+
+    HANDLE object = GetClipboardData(format);
+    void* buffer = object ? GlobalLock(object) : NULL;
+    if (buffer)
+    {
+        if (format == CF_UNICODETEXT)
+        {
+            char* text = _glfwCreateUTF8FromWideStringWin32(buffer);
+            if (text)
+            {
+                result = (unsigned char*) text;
+                *size = strlen(text);
+            }
+        }
+        else if (strcmp(mime, "text/html") == 0)
+        {
+            // The document, without the header saying where it is
+            result = readHtmlClipboardData(buffer, GlobalSize(object), size);
+        }
+        else
+        {
+            // The memory's size, which Windows may have rounded up from what was put there
+            const size_t length = GlobalSize(object);
+            result = _glfwCopyClipboardBytes(buffer, length);
+            if (result)
+                *size = length;
+        }
+
+        GlobalUnlock(object);
+    }
+    else
+    {
+        _glfwInputErrorWin32(GLFW_PLATFORM_ERROR,
+                             "Win32: Failed to read clipboard data");
+    }
+
+    CloseClipboard();
+    return result;
 }
 
 EGLenum _glfwGetEGLPlatformWin32(EGLint** attribs)

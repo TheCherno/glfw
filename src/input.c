@@ -1515,18 +1515,146 @@ GLFWAPI int glfwGetGamepadState(int jid, GLFWgamepadstate* state)
     return GLFW_TRUE;
 }
 
+// [Hazel] Returns the MIME type a clipboard format is kept under: the text format's for plain
+// "text/plain", which glfwSetClipboardData takes to mean UTF-8 text.
+//
+static const char* canonicalClipboardMime(const char* mime)
+{
+    if (strcmp(mime, "text/plain") == 0)
+        return _GLFW_CLIPBOARD_TEXT_MIME;
+
+    return mime;
+}
+
+unsigned char* _glfwCopyClipboardBytes(const void* data, size_t size)
+{
+    unsigned char* copy = _glfw_calloc(size + 1, 1);
+    if (!copy)
+    {
+        _glfwInputError(GLFW_OUT_OF_MEMORY, NULL);
+        return NULL;
+    }
+
+    if (size)
+        memcpy(copy, data, size);
+
+    return copy;
+}
+
+const _GLFWclipboarditem* _glfwFindClipboardItem(const char* mime)
+{
+    for (int i = 0;  i < _glfw.clipboard.itemCount;  i++)
+    {
+        if (strcmp(_glfw.clipboard.items[i].mime, mime) == 0)
+            return _glfw.clipboard.items + i;
+    }
+
+    return NULL;
+}
+
+void _glfwFreeClipboardItems(void)
+{
+    for (int i = 0;  i < _glfw.clipboard.itemCount;  i++)
+    {
+        _glfw_free(_glfw.clipboard.items[i].mime);
+        _glfw_free(_glfw.clipboard.items[i].data);
+    }
+
+    _glfw_free(_glfw.clipboard.items);
+    _glfw.clipboard.items = NULL;
+    _glfw.clipboard.itemCount = 0;
+}
+
+GLFWAPI void glfwSetClipboardData(const GLFWclipboarditem* items, int count)
+{
+    assert(count >= 0);
+    assert(items != NULL || count == 0);
+
+    _GLFW_REQUIRE_INIT();
+
+    _GLFWclipboarditem* copies = NULL;
+    if (count > 0)
+    {
+        copies = _glfw_calloc(count, sizeof(_GLFWclipboarditem));
+        if (!copies)
+        {
+            _glfwInputError(GLFW_OUT_OF_MEMORY, NULL);
+            return;
+        }
+    }
+
+    for (int i = 0;  i < count;  i++)
+    {
+        assert(items[i].mime != NULL);
+        assert(items[i].data != NULL || items[i].size == 0);
+
+        copies[i].mime = _glfw_strdup(canonicalClipboardMime(items[i].mime));
+        copies[i].data = _glfwCopyClipboardBytes(items[i].data, items[i].size);
+        copies[i].size = items[i].size;
+
+        if (!copies[i].mime || !copies[i].data)
+        {
+            for (int j = 0;  j <= i;  j++)
+            {
+                _glfw_free(copies[j].mime);
+                _glfw_free(copies[j].data);
+            }
+
+            _glfw_free(copies);
+            _glfwInputError(GLFW_OUT_OF_MEMORY, NULL);
+            return;
+        }
+    }
+
+    _glfwFreeClipboardItems();
+    _glfw.clipboard.items = copies;
+    _glfw.clipboard.itemCount = count;
+    _glfw.platform.setClipboardData();
+}
+
+GLFWAPI const void* glfwGetClipboardData(const char* mime, size_t* size)
+{
+    assert(mime != NULL);
+
+    if (size)
+        *size = 0;
+
+    _GLFW_REQUIRE_INIT_OR_RETURN(NULL);
+
+    size_t length = 0;
+    unsigned char* data =
+        _glfw.platform.getClipboardData(canonicalClipboardMime(mime), &length);
+
+    _glfw_free(_glfw.clipboard.read);
+    _glfw.clipboard.read = data;
+
+    if (data && size)
+        *size = length;
+
+    return data;
+}
+
 GLFWAPI void glfwSetClipboardString(GLFWwindow* handle, const char* string)
 {
     assert(string != NULL);
 
-    _GLFW_REQUIRE_INIT();
-    _glfw.platform.setClipboardString(string);
+    // [Hazel] Plain text is one format of the multi-format clipboard.
+    const GLFWclipboarditem item = { _GLFW_CLIPBOARD_TEXT_MIME, string, strlen(string) };
+    glfwSetClipboardData(&item, 1);
 }
 
 GLFWAPI const char* glfwGetClipboardString(GLFWwindow* handle)
 {
     _GLFW_REQUIRE_INIT_OR_RETURN(NULL);
-    return _glfw.platform.getClipboardString();
+
+    const char* string = glfwGetClipboardData(_GLFW_CLIPBOARD_TEXT_MIME, NULL);
+    if (!string)
+    {
+        _glfwInputError(GLFW_FORMAT_UNAVAILABLE,
+                        "The clipboard holds no text");
+    }
+
+    return string;
 }
 
 GLFWAPI double glfwGetTime(void)

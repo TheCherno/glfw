@@ -2205,40 +2205,81 @@ void _glfwSetCursorCocoa(_GLFWwindow* window, _GLFWcursor* cursor)
     } // autoreleasepool
 }
 
-void _glfwSetClipboardStringCocoa(const char* string)
+// [Hazel] Returns the pasteboard type a MIME type travels as: NSPasteboardTypeString for UTF-8
+// text, NSPasteboardTypeHTML for HTML, and anything else under its own name.
+//
+static NSPasteboardType pasteboardType(const char* mime)
+{
+    if (strcmp(mime, _GLFW_CLIPBOARD_TEXT_MIME) == 0)
+        return NSPasteboardTypeString;
+
+    if (strcmp(mime, "text/html") == 0)
+        return NSPasteboardTypeHTML;
+
+    return @(mime);
+}
+
+void _glfwSetClipboardDataCocoa(void)
 {
     @autoreleasepool {
+
     NSPasteboard* pasteboard = [NSPasteboard generalPasteboard];
-    [pasteboard declareTypes:@[NSPasteboardTypeString] owner:nil];
-    [pasteboard setString:@(string) forType:NSPasteboardTypeString];
+
+    NSMutableArray<NSPasteboardType>* types = [NSMutableArray array];
+    for (int i = 0;  i < _glfw.clipboard.itemCount;  i++)
+        [types addObject:pasteboardType(_glfw.clipboard.items[i].mime)];
+
+    [pasteboard declareTypes:types owner:nil];
+
+    for (int i = 0;  i < _glfw.clipboard.itemCount;  i++)
+    {
+        const _GLFWclipboarditem* item = _glfw.clipboard.items + i;
+        NSPasteboardType type = pasteboardType(item->mime);
+
+        if ([type isEqualToString:NSPasteboardTypeString])
+        {
+            // The item's data ends in a zero byte, so it's already a C string
+            NSString* string = [NSString stringWithUTF8String:(const char*) item->data];
+            if (string)
+                [pasteboard setString:string forType:type];
+        }
+        else
+        {
+            NSData* data = [NSData dataWithBytes:item->data length:item->size];
+            [pasteboard setData:data forType:type];
+        }
+    }
+
     } // autoreleasepool
 }
 
-const char* _glfwGetClipboardStringCocoa(void)
+unsigned char* _glfwGetClipboardDataCocoa(const char* mime, size_t* size)
 {
     @autoreleasepool {
 
     NSPasteboard* pasteboard = [NSPasteboard generalPasteboard];
+    NSPasteboardType type = pasteboardType(mime);
 
-    if (![[pasteboard types] containsObject:NSPasteboardTypeString])
-    {
-        _glfwInputError(GLFW_FORMAT_UNAVAILABLE,
-                        "Cocoa: Failed to retrieve string from pasteboard");
+    if (![[pasteboard types] containsObject:type])
         return NULL;
+
+    if ([type isEqualToString:NSPasteboardTypeString])
+    {
+        NSString* object = [pasteboard stringForType:type];
+        if (!object)
+            return NULL;
+
+        const char* text = [object UTF8String];
+        *size = strlen(text);
+        return _glfwCopyClipboardBytes(text, *size);
     }
 
-    NSString* object = [pasteboard stringForType:NSPasteboardTypeString];
-    if (!object)
-    {
-        _glfwInputError(GLFW_PLATFORM_ERROR,
-                        "Cocoa: Failed to retrieve object from pasteboard");
+    NSData* data = [pasteboard dataForType:type];
+    if (!data)
         return NULL;
-    }
 
-    _glfw_free(_glfw.ns.clipboardString);
-    _glfw.ns.clipboardString = _glfw_strdup([object UTF8String]);
-
-    return _glfw.ns.clipboardString;
+    *size = [data length];
+    return _glfwCopyClipboardBytes([data bytes], *size);
 
     } // autoreleasepool
 }

@@ -2204,6 +2204,28 @@ typedef struct GLFWimage
     unsigned char* pixels;
 } GLFWimage;
 
+/*! @brief [Hazel] One format of the clipboard's contents.
+ *
+ *  This describes the clipboard's contents in one format, for @ref
+ *  glfwSetClipboardData.
+ *
+ *  @sa @ref glfwSetClipboardData
+ *
+ *  @ingroup input
+ */
+typedef struct GLFWclipboarditem
+{
+    /*! The MIME type of `data`.
+     */
+    const char* mime;
+    /*! The bytes, in `mime`'s own wire form.
+     */
+    const void* data;
+    /*! The number of bytes in `data`.
+     */
+    size_t size;
+} GLFWclipboarditem;
+
 /*! @brief Gamepad input state
  *
  *  This describes the input state of a gamepad.
@@ -6356,6 +6378,70 @@ GLFWAPI void glfwSetClipboardString(GLFWwindow* window, const char* string);
  *  @ingroup input
  */
 GLFWAPI const char* glfwGetClipboardString(GLFWwindow* window);
+
+/*! @brief [Hazel] Puts the same contents on the clipboard in several formats.
+ *
+ *  This makes the clipboard hold `items`, each the same contents in a different
+ *  MIME type, so a program pasting can take the richest format it understands.
+ *  It replaces whatever the clipboard held, from this program or another.
+ *
+ *  `text/plain;charset=utf-8` (or `text/plain`) is UTF-8 text, transferred as
+ *  the platform's own text format (`UTF8_STRING` on X11, `CF_UNICODETEXT` on
+ *  Windows, `NSPasteboardTypeString` on macOS), so every program can paste it.
+ *  `text/html` is a UTF-8 HTML document, transferred as the platform's own
+ *  HTML format (`HTML Format` with its offsets header on Windows,
+ *  `NSPasteboardTypeHTML` on macOS), so word processors keep its formatting.
+ *  Any other MIME type is registered with the platform under that exact name
+ *  and its bytes transferred verbatim, for a format a cooperating program
+ *  already knows how to read. @ref glfwSetClipboardString is this with a single
+ *  text item.
+ *
+ *  @param[in] items The formats, at most one per MIME type.
+ *  @param[in] count The number of items.
+ *
+ *  @pointer_lifetime The specified data is copied before this function returns.
+ *
+ *  @errors Possible errors include @ref GLFW_NOT_INITIALIZED, @ref
+ *  GLFW_OUT_OF_MEMORY and @ref GLFW_PLATFORM_ERROR.
+ *
+ *  @thread_safety This function must only be called from the main thread.
+ *
+ *  @sa @ref glfwGetClipboardData
+ *
+ *  @ingroup input
+ */
+GLFWAPI void glfwSetClipboardData(const GLFWclipboarditem* items, int count);
+
+/*! @brief [Hazel] Returns the clipboard's contents in one format.
+ *
+ *  This returns the clipboard's contents in `mime`, whichever program put them
+ *  there, or `NULL` if the clipboard doesn't hold that format. Unlike @ref
+ *  glfwGetClipboardString, a missing format is not an error. The MIME types
+ *  are the ones @ref glfwSetClipboardData describes.
+ *
+ *  @remark @win32 A format other than text comes back as long as Windows'
+ *  clipboard memory for it, which may be rounded up past what was put there,
+ *  so a format meant to round trip should record its own length.
+ *
+ *  @param[in] mime The MIME type wanted.
+ *  @param[out] size Where to store the number of bytes, or `NULL`. It is set
+ *  to zero when the format isn't there.
+ *  @return The bytes, followed by a zero byte not counted in `size`, or `NULL`.
+ *
+ *  @pointer_lifetime The returned data is allocated and freed by GLFW. It is
+ *  valid until the next call to @ref glfwGetClipboardData or @ref
+ *  glfwGetClipboardString, or until the library is terminated.
+ *
+ *  @errors Possible errors include @ref GLFW_NOT_INITIALIZED and @ref
+ *  GLFW_PLATFORM_ERROR.
+ *
+ *  @thread_safety This function must only be called from the main thread.
+ *
+ *  @sa @ref glfwSetClipboardData
+ *
+ *  @ingroup input
+ */
+GLFWAPI const void* glfwGetClipboardData(const char* mime, size_t* size);
 
 /*! @brief Returns the GLFW time.
  *

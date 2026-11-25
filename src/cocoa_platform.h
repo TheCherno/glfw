@@ -175,7 +175,6 @@ typedef struct _GLFWlibraryNS
     char                keynames[GLFW_KEY_LAST + 1][17];
     short int           keycodes[256];
     short int           scancodes[GLFW_KEY_LAST + 1];
-    char*               clipboardString;
     CGPoint             cascadePoint;
     // Where to place the cursor when re-enabled
     double              restoreCursorPosX, restoreCursorPosY;
@@ -279,8 +278,8 @@ GLFWbool _glfwCreateCursorCocoa(_GLFWcursor* cursor, const GLFWimage* image, int
 GLFWbool _glfwCreateStandardCursorCocoa(_GLFWcursor* cursor, int shape);
 void _glfwDestroyCursorCocoa(_GLFWcursor* cursor);
 void _glfwSetCursorCocoa(_GLFWwindow* window, _GLFWcursor* cursor);
-void _glfwSetClipboardStringCocoa(const char* string);
-const char* _glfwGetClipboardStringCocoa(void);
+void _glfwSetClipboardDataCocoa(void);
+unsigned char* _glfwGetClipboardDataCocoa(const char* mime, size_t* size);
 
 EGLenum _glfwGetEGLPlatformCocoa(EGLint** attribs);
 EGLNativeDisplayType _glfwGetEGLNativeDisplayCocoa(void);

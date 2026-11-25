@@ -354,6 +354,10 @@ typedef struct _GLFWfallbackEdgeWayland
 typedef struct _GLFWofferWayland
 {
     struct wl_data_offer*       offer;
+    // [Hazel] Every MIME type the offer carries, for the clipboard to tell a format it doesn't
+    // carry from one that's empty.
+    char**                      mimeTypes;
+    unsigned int                mimeTypeCount;
     GLFWbool                    text_plain_utf8;
     GLFWbool                    text_uri_list;
     // Set when the offer advertises our toplevel-drag marker mime.
@@ -500,6 +504,9 @@ typedef struct _GLFWlibraryWayland
     unsigned int                offerCount;
 
     struct wl_data_offer*       selectionOffer;
+    // [Hazel] These are the MIME types selectionOffer carries, taken from its _GLFWofferWayland.
+    char**                      selectionMimeTypes;
+    unsigned int                selectionMimeTypeCount;
     struct wl_data_source*      selectionSource;
 
     struct wl_data_offer*       dragOffer;
@@ -569,7 +576,6 @@ typedef struct _GLFWlibraryWayland
     int32_t                     keyRepeatDelay;
     int                         keyRepeatScancode;
 
-    char*                       clipboardString;
     short int                   keycodes[256];
     short int                   scancodes[GLFW_KEY_LAST + 1];
     char                        keynames[GLFW_KEY_LAST + 1][5];
@@ -802,8 +808,9 @@ GLFWbool _glfwCreateCursorWayland(_GLFWcursor* cursor, const GLFWimage* image, i
 GLFWbool _glfwCreateStandardCursorWayland(_GLFWcursor* cursor, int shape);
 void _glfwDestroyCursorWayland(_GLFWcursor* cursor);
 void _glfwSetCursorWayland(_GLFWwindow* window, _GLFWcursor* cursor);
-void _glfwSetClipboardStringWayland(const char* string);
-const char* _glfwGetClipboardStringWayland(void);
+void _glfwSetClipboardDataWayland(void);
+unsigned char* _glfwGetClipboardDataWayland(const char* mime, size_t* size);
+void _glfwFreeMimeTypesWayland(char** mimeTypes, unsigned int count);
 
 EGLenum _glfwGetEGLPlatformWayland(EGLint** attribs);
 EGLNativeDisplayType _glfwGetEGLNativeDisplayWayland(void);

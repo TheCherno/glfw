@@ -2045,9 +2045,10 @@ static void handleEvents(double* timeout)
     }
 }
 
-// Reads the specified data offer as the specified MIME type
+// Reads the specified data offer as the specified MIME type. [Hazel] The bytes are followed by a
+// zero byte, so text is also a C string, and their count goes in `length` if it isn't NULL.
 //
-static char* readDataOfferAsString(struct wl_data_offer* offer, const char* mimeType)
+static char* readDataOffer(struct wl_data_offer* offer, const char* mimeType, size_t* outLength)
 {
     int fds[2];
 
@@ -2108,6 +2109,9 @@ static char* readDataOfferAsString(struct wl_data_offer* offer, const char* mime
     close(fds[0]);
 
     string[length] = '\0';
+    if (outLength)
+        *outLength = length;
+
     return string;
 }
 
@@ -2924,6 +2928,22 @@ static void dataOfferHandleOffer(void* userData,
     {
         if (_glfw.wl.offers[i].offer == offer)
         {
+            // [Hazel] Every type, for the clipboard.
+            _GLFWofferWayland* entry = _glfw.wl.offers + i;
+            char* copy = _glfw_strdup(mimeType);
+            char** mimeTypes = copy ?
+                _glfw_realloc(entry->mimeTypes, sizeof(char*) * (entry->mimeTypeCount + 1)) : NULL;
+            if (mimeTypes)
+            {
+                entry->mimeTypes = mimeTypes;
+                entry->mimeTypes[entry->mimeTypeCount++] = copy;
+            }
+            else
+            {
+                _glfw_free(copy);
+                _glfwInputError(GLFW_OUT_OF_MEMORY, NULL);
+            }
+
             if (strcmp(mimeType, "text/plain;charset=utf-8") == 0)
                 _glfw.wl.offers[i].text_plain_utf8 = GLFW_TRUE;
             else if (strcmp(mimeType, "text/uri-list") == 0)
@@ -3069,6 +3089,7 @@ static void dataDeviceHandleEnter(void* userData,
         wl_data_offer_destroy(offer);
     }
 
+    _glfwFreeMimeTypesWayland(_glfw.wl.offers[i].mimeTypes, _glfw.wl.offers[i].mimeTypeCount);
     _glfw.wl.offers[i] = _glfw.wl.offers[_glfw.wl.offerCount - 1];
     _glfw.wl.offerCount--;
 }
@@ -3163,7 +3184,7 @@ static void dataDeviceHandleDrop(void* userData,
         return;
     }
 
-    char* string = readDataOfferAsString(_glfw.wl.dragOffer, "text/uri-list");
+    char* string = readDataOffer(_glfw.wl.dragOffer, "text/uri-list", NULL);
     if (string)
     {
         int count;
@@ -3192,14 +3213,18 @@ static void dataDeviceHandleSelection(void* userData,
         _glfw.wl.selectionOffer = NULL;
     }
 
+    _glfwFreeMimeTypesWayland(_glfw.wl.selectionMimeTypes, _glfw.wl.selectionMimeTypeCount);
+    _glfw.wl.selectionMimeTypes = NULL;
+    _glfw.wl.selectionMimeTypeCount = 0;
+
     for (unsigned int i = 0; i < _glfw.wl.offerCount; i++)
     {
         if (_glfw.wl.offers[i].offer == offer)
         {
-            if (_glfw.wl.offers[i].text_plain_utf8)
-                _glfw.wl.selectionOffer = offer;
-            else
-                wl_data_offer_destroy(offer);
+            // [Hazel] Kept whatever it carries, for glfwGetClipboardData, with its types.
+            _glfw.wl.selectionOffer = offer;
+            _glfw.wl.selectionMimeTypes = _glfw.wl.offers[i].mimeTypes;
+            _glfw.wl.selectionMimeTypeCount = _glfw.wl.offers[i].mimeTypeCount;
 
             _glfw.wl.offers[i] = _glfw.wl.offers[_glfw.wl.offerCount - 1];
             _glfw.wl.offerCount--;
@@ -4618,19 +4643,20 @@ static void dataSourceHandleSend(void* userData,
                                  int fd)
 {
     // Ignore it if this is an outdated or invalid request
-    if (_glfw.wl.selectionSource != source ||
-        strcmp(mimeType, "text/plain;charset=utf-8") != 0)
+    const _GLFWclipboarditem* item =
+        _glfw.wl.selectionSource == source ? _glfwFindClipboardItem(mimeType) : NULL;
+    if (!item)
     {
         close(fd);
         return;
     }
 
-    char* string = _glfw.wl.clipboardString;
-    size_t length = strlen(string);
+    const unsigned char* bytes = item->data;
+    size_t length = item->size;
 
     while (length > 0)
     {
-        const ssize_t result = write(fd, string, length);
+        const ssize_t result = write(fd, bytes, length);
         if (result == -1)
         {
             if (errno == EINTR)
@@ -4643,7 +4669,7 @@ static void dataSourceHandleSend(void* userData,
         }
 
         length -= result;
-        string += result;
+        bytes += result;
     }
 
     close(fd);
@@ -4667,7 +4693,15 @@ static const struct wl_data_source_listener dataSourceListener =
     dataSourceHandleCancelled,
 };
 
-void _glfwSetClipboardStringWayland(const char* string)
+void _glfwFreeMimeTypesWayland(char** mimeTypes, unsigned int count)
+{
+    for (unsigned int i = 0; i < count; i++)
+        _glfw_free(mimeTypes[i]);
+
+    _glfw_free(mimeTypes);
+}
+
+void _glfwSetClipboardDataWayland(void)
 {
     if (_glfw.wl.selectionSource)
     {
@@ -4675,15 +4709,11 @@ void _glfwSetClipboardStringWayland(const char* string)
         _glfw.wl.selectionSource = NULL;
     }
 
-    char* copy = _glfw_strdup(string);
-    if (!copy)
+    if (_glfw.clipboard.itemCount == 0)
     {
-        _glfwInputError(GLFW_OUT_OF_MEMORY, NULL);
+        wl_data_device_set_selection(_glfw.wl.dataDevice, NULL, _glfw.wl.serial);
         return;
     }
-
-    _glfw_free(_glfw.wl.clipboardString);
-    _glfw.wl.clipboardString = copy;
 
     _glfw.wl.selectionSource =
         wl_data_device_manager_create_data_source(_glfw.wl.dataDeviceManager);
@@ -4696,28 +4726,38 @@ void _glfwSetClipboardStringWayland(const char* string)
     wl_data_source_add_listener(_glfw.wl.selectionSource,
                                 &dataSourceListener,
                                 NULL);
-    wl_data_source_offer(_glfw.wl.selectionSource, "text/plain;charset=utf-8");
+    for (int i = 0; i < _glfw.clipboard.itemCount; i++)
+        wl_data_source_offer(_glfw.wl.selectionSource, _glfw.clipboard.items[i].mime);
+
     wl_data_device_set_selection(_glfw.wl.dataDevice,
                                  _glfw.wl.selectionSource,
                                  _glfw.wl.serial);
 }
 
-const char* _glfwGetClipboardStringWayland(void)
+unsigned char* _glfwGetClipboardDataWayland(const char* mime, size_t* size)
 {
-    if (!_glfw.wl.selectionOffer)
+    // While this process holds the selection its own copy is the clipboard, and reading the
+    // offer would have the compositor ask this same thread to write it.
+    if (_glfw.wl.selectionSource)
     {
-        _glfwInputError(GLFW_FORMAT_UNAVAILABLE,
-                        "Wayland: No clipboard data available");
-        return NULL;
+        const _GLFWclipboarditem* item = _glfwFindClipboardItem(mime);
+        if (!item)
+            return NULL;
+
+        *size = item->size;
+        return _glfwCopyClipboardBytes(item->data, item->size);
     }
 
-    if (_glfw.wl.selectionSource)
-        return _glfw.wl.clipboardString;
+    if (!_glfw.wl.selectionOffer)
+        return NULL;
 
-    _glfw_free(_glfw.wl.clipboardString);
-    _glfw.wl.clipboardString =
-        readDataOfferAsString(_glfw.wl.selectionOffer, "text/plain;charset=utf-8");
-    return _glfw.wl.clipboardString;
+    for (unsigned int i = 0; i < _glfw.wl.selectionMimeTypeCount; i++)
+    {
+        if (strcmp(_glfw.wl.selectionMimeTypes[i], mime) == 0)
+            return (unsigned char*) readDataOffer(_glfw.wl.selectionOffer, mime, size);
+    }
+
+    return NULL;
 }
 
 EGLenum _glfwGetEGLPlatformWayland(EGLint** attribs)

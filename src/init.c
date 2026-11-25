@@ -123,6 +123,11 @@ static void terminate(void)
     _glfw.platform.terminateJoysticks();
     _glfw.platform.terminate();
 
+    // [Hazel] After the platform, which may hand the clipboard to a clipboard manager as it goes.
+    _glfwFreeClipboardItems();
+    _glfw_free(_glfw.clipboard.read);
+    _glfw.clipboard.read = NULL;
+
     _glfw.initialized = GLFW_FALSE;
 
     while (_glfw.errorListHead)

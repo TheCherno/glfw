@@ -53,8 +53,8 @@ GLFWbool _glfwConnectNull(int platformID, _GLFWplatform* platform)
         .setCursor = _glfwSetCursorNull,
         .getScancodeName = _glfwGetScancodeNameNull,
         .getKeyScancode = _glfwGetKeyScancodeNull,
-        .setClipboardString = _glfwSetClipboardStringNull,
-        .getClipboardString = _glfwGetClipboardStringNull,
+        .setClipboardData = _glfwSetClipboardDataNull,
+        .getClipboardData = _glfwGetClipboardDataNull,
         .initJoysticks = _glfwInitJoysticksNull,
         .terminateJoysticks = _glfwTerminateJoysticksNull,
         .pollJoystick = _glfwPollJoystickNull,
@@ -259,7 +259,6 @@ int _glfwInitNull(void)
 
 void _glfwTerminateNull(void)
 {
-    free(_glfw.null.clipboardString);
     _glfwTerminateOSMesa();
     _glfwTerminateEGL();
     memset(&_glfw.null, 0, sizeof(_glfw.null));
