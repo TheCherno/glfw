@@ -772,8 +772,13 @@ static void resizeFramebuffer(_GLFWwindow* window)
 {
     if (window->wl.fractionalScale)
     {
-        window->wl.fbWidth = (window->wl.width * window->wl.scalingNumerator) / 120;
-        window->wl.fbHeight = (window->wl.height * window->wl.scalingNumerator) / 120;
+        // [Hazel] Rounded halfway away from zero, as wp_fractional_scale_v1 says a buffer for a
+        // fractional scale is sized. Truncated, a window whose size times the scale ends in a
+        // half (1086 at 1.25 is 1357.5) got a buffer a row short of what the compositor shows it
+        // on, so the compositor stretched it, and every row of text landed a little further off
+        // the pixel grid than the one above.
+        window->wl.fbWidth = (window->wl.width * window->wl.scalingNumerator + 60) / 120;
+        window->wl.fbHeight = (window->wl.height * window->wl.scalingNumerator + 60) / 120;
     }
     else
     {
