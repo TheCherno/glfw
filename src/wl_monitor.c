@@ -56,6 +56,31 @@ static void outputHandleGeometry(void* userData,
     monitor->widthMM = physicalWidth;
     monitor->heightMM = physicalHeight;
 
+    // [Hazel] This is the panel's own subpixel order, which the desktop only shares while the
+    // output isn't rotated or flipped.
+    monitor->subpixelOrder = GLFW_SUBPIXEL_UNKNOWN;
+    if (transform == WL_OUTPUT_TRANSFORM_NORMAL)
+    {
+        switch (subpixel)
+        {
+            case WL_OUTPUT_SUBPIXEL_NONE:
+                monitor->subpixelOrder = GLFW_SUBPIXEL_NONE;
+                break;
+            case WL_OUTPUT_SUBPIXEL_HORIZONTAL_RGB:
+                monitor->subpixelOrder = GLFW_SUBPIXEL_HORIZONTAL_RGB;
+                break;
+            case WL_OUTPUT_SUBPIXEL_HORIZONTAL_BGR:
+                monitor->subpixelOrder = GLFW_SUBPIXEL_HORIZONTAL_BGR;
+                break;
+            case WL_OUTPUT_SUBPIXEL_VERTICAL_RGB:
+                monitor->subpixelOrder = GLFW_SUBPIXEL_VERTICAL_RGB;
+                break;
+            case WL_OUTPUT_SUBPIXEL_VERTICAL_BGR:
+                monitor->subpixelOrder = GLFW_SUBPIXEL_VERTICAL_BGR;
+                break;
+        }
+    }
+
     if (strlen(monitor->name) == 0)
         snprintf(monitor->name, sizeof(monitor->name), "%s %s", make, model);
 }

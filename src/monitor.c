@@ -173,6 +173,7 @@ _GLFWmonitor* _glfwAllocMonitor(const char* name, int widthMM, int heightMM)
     _GLFWmonitor* monitor = _glfw_calloc(1, sizeof(_GLFWmonitor));
     monitor->widthMM = widthMM;
     monitor->heightMM = heightMM;
+    monitor->subpixelOrder = GLFW_SUBPIXEL_UNKNOWN;
 
     strncpy(monitor->name, name, sizeof(monitor->name) - 1);
 
@@ -391,6 +392,16 @@ GLFWAPI void glfwGetMonitorContentScale(GLFWmonitor* handle,
     assert(monitor != NULL);
 
     _glfw.platform.getMonitorContentScale(monitor, xscale, yscale);
+}
+
+GLFWAPI int glfwGetMonitorSubpixelOrder(GLFWmonitor* handle)
+{
+    _GLFW_REQUIRE_INIT_OR_RETURN(GLFW_SUBPIXEL_UNKNOWN);
+
+    _GLFWmonitor* monitor = (_GLFWmonitor*) handle;
+    assert(monitor != NULL);
+
+    return monitor->subpixelOrder;
 }
 
 GLFWAPI const char* glfwGetMonitorName(GLFWmonitor* handle)

@@ -608,6 +608,9 @@ struct _GLFWmonitor
     // Physical dimensions in millimeters.
     int             widthMM, heightMM;
 
+    // [Hazel] The platform sets this to a GLFW_SUBPIXEL_* value; see glfwGetMonitorSubpixelOrder.
+    int             subpixelOrder;
+
     // The window whose video mode is current on this monitor
     _GLFWwindow*    window;
 

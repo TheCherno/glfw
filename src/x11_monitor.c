@@ -182,6 +182,30 @@ void _glfwPollMonitorsX11(void)
             monitor->x11.output = sr->outputs[i];
             monitor->x11.crtc   = oi->crtc;
 
+            // [Hazel] This is the panel's own subpixel order, which the desktop only shares while
+            // the CRTC isn't rotated or reflected.
+            if (ci->rotation == RR_Rotate_0)
+            {
+                switch (oi->subpixel_order)
+                {
+                    case SubPixelNone:
+                        monitor->subpixelOrder = GLFW_SUBPIXEL_NONE;
+                        break;
+                    case SubPixelHorizontalRGB:
+                        monitor->subpixelOrder = GLFW_SUBPIXEL_HORIZONTAL_RGB;
+                        break;
+                    case SubPixelHorizontalBGR:
+                        monitor->subpixelOrder = GLFW_SUBPIXEL_HORIZONTAL_BGR;
+                        break;
+                    case SubPixelVerticalRGB:
+                        monitor->subpixelOrder = GLFW_SUBPIXEL_VERTICAL_RGB;
+                        break;
+                    case SubPixelVerticalBGR:
+                        monitor->subpixelOrder = GLFW_SUBPIXEL_VERTICAL_BGR;
+                        break;
+                }
+            }
+
             for (j = 0;  j < screenCount;  j++)
             {
                 if (screens[j].x_org == ci->x &&

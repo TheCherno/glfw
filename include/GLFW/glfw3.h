@@ -2831,6 +2831,41 @@ GLFWAPI void glfwGetMonitorPhysicalSize(GLFWmonitor* monitor, int* widthMM, int*
  */
 GLFWAPI void glfwGetMonitorContentScale(GLFWmonitor* monitor, float* xscale, float* yscale);
 
+/*! @name Subpixel orders
+ *  [Hazel] The order of a monitor's colour subpixels within a pixel, as returned by
+ *  @ref glfwGetMonitorSubpixelOrder.
+ *  @{ */
+#define GLFW_SUBPIXEL_UNKNOWN           0x00039001
+#define GLFW_SUBPIXEL_NONE              0x00039002
+#define GLFW_SUBPIXEL_HORIZONTAL_RGB    0x00039003
+#define GLFW_SUBPIXEL_HORIZONTAL_BGR    0x00039004
+#define GLFW_SUBPIXEL_VERTICAL_RGB      0x00039005
+#define GLFW_SUBPIXEL_VERTICAL_BGR      0x00039006
+/*! @} */
+
+/*! @brief [Hazel] Returns the order of the monitor's colour subpixels.
+ *
+ *  Text rendered with subpixel anti-aliasing needs to know the order the screen's red, green
+ *  and blue subpixels run in. The order is the one the monitor shows the desktop with, so a
+ *  rotated monitor whose rotation would change it reports `GLFW_SUBPIXEL_UNKNOWN`.
+ *
+ *  This is what the screen itself reports: on Wayland what the compositor says about the
+ *  output, on X11 what RandR says about it. Many compositors say nothing, and Windows, macOS
+ *  and the null platform have nothing to say, so `GLFW_SUBPIXEL_UNKNOWN` is common. The
+ *  user's own text settings (fontconfig, ClearType) are not read here.
+ *
+ *  @param[in] monitor The monitor to query.
+ *  @return One of the `GLFW_SUBPIXEL_*` values, or `GLFW_SUBPIXEL_UNKNOWN` if an
+ *  [error](@ref error_handling) occurred.
+ *
+ *  @errors Possible errors include @ref GLFW_NOT_INITIALIZED.
+ *
+ *  @thread_safety This function must only be called from the main thread.
+ *
+ *  @ingroup monitor
+ */
+GLFWAPI int glfwGetMonitorSubpixelOrder(GLFWmonitor* monitor);
+
 /*! @brief Returns the name of the specified monitor.
  *
  *  This function returns a human-readable name, encoded as UTF-8, of the
